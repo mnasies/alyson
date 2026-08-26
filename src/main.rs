@@ -20,7 +20,14 @@ fn main() -> std::io::Result<()> {
     let srvr = TcpListener::bind("127.0.0.1:9000")?;
 
     for stream in srvr.incoming() {
-        handle_clients(stream?);
+        match stream {
+            Ok(s) => {
+                handle_clients(s);
+            }
+            Err(_) => {
+                println!("Socket accept failure!")
+            }
+        }
     }
     Ok(())
 }
