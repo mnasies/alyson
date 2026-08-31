@@ -8,6 +8,7 @@ use std::vec::Vec;
 fn handle_clients(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream>>>) {
     let mut buf = [0u8; 1024];
     loop {
+        let mut clients_lock = clients.lock().unwrap();
         let n = match stream.read(&mut buf) {
             Ok(n) => n,
             Err(_) => {
@@ -16,24 +17,25 @@ fn handle_clients(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream>>>) {
             }
         };
         if n == 0 {
+            let mut i = 0;
+            for strm in clients_lock.iter() {
+                if strm.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                    break;
+                }
+                i += 1;
+            }
+            clients_lock.remove(i);
             break;
         }
         let data = &buf[..n];
-        match clients.lock() {
-            Ok(s) => {
-                for mut strm in s.iter() {
-                    if strm.peer_addr().unwrap() != stream.peer_addr().unwrap() {
-                        match strm.write_all(&data) {
-                            Ok(_) => {}
-                            Err(_) => {
-                                println!("Writing data to an initiated socket unsuccessful!");
-                            }
-                        }
+        for mut strm in clients_lock.iter() {
+            if strm.peer_addr().unwrap() != stream.peer_addr().unwrap() {
+                match strm.write_all(&data) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        println!("Writing data to an initiated socket unsuccessful!");
                     }
                 }
-            }
-            Err(_) => {
-                panic!("Couldn't lock clients mutex!");
             }
         }
         println!("{}", String::from_utf8_lossy(&data));
