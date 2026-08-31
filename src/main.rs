@@ -5,23 +5,48 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::vec::Vec;
 
-fn handle_clients(mut stream: TcpStream, mut clients: Arc<Mutex<Vec<TcpStream>>>) {
+fn handle_clients(mut stream: TcpStream, clients: Arc<Mutex<Vec<TcpStream>>>) {
     let mut buf = [0u8; 1024];
     loop {
-        let n = stream.read(&mut buf).unwrap();
+        let n = match stream.read(&mut buf) {
+            Ok(n) => n,
+            Err(_) => {
+                println!("Couldn't read message from connected client!");
+                0
+            }
+        };
         if n == 0 {
             break;
         }
         let data = &buf[..n];
+        match clients.lock() {
+            Ok(s) => {
+                for mut strm in s.iter() {
+                    if strm.peer_addr().unwrap() != stream.peer_addr().unwrap() {
+                        match strm.write_all(&data) {
+                            Ok(_) => {}
+                            Err(_) => {
+                                println!("Writing data to an initiated socket unsuccessful!");
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                panic!("Couldn't lock clients mutex!");
+            }
+        }
         println!("{}", String::from_utf8_lossy(&data));
-        stream.write_all(&data).unwrap();
     }
 }
 
 fn main() -> std::io::Result<()> {
-    let clients = Arc::new(Mutex::new(Vec::<TcpStream>::new()));
     println!("Hello, world!");
-    let srvr = TcpListener::bind("127.0.0.1:9000")?;
+    let srvr = TcpListener::bind("127.0.0.1:0")?;
+
+    println!("port number: {}", TcpListener::local_addr(&srvr)?);
+
+    let clients = Arc::new(Mutex::new(Vec::<TcpStream>::new()));
     let mut count_client = 0;
 
     for stream in srvr.incoming() {
