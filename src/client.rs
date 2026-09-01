@@ -3,7 +3,7 @@ use std::net::TcpStream;
 #[derive(Debug)]
 pub struct Client {
     id: usize,
-    username: String,
+    pub username: String,
     pub stream: TcpStream,
 }
 

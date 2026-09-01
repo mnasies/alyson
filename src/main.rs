@@ -11,7 +11,7 @@ use std::vec::Vec;
 use client::Client;
 use wire_chat_rs::WireError;
 
-fn handle_clients(mut curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
+fn handle_clients(curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
     let mut buf = [0u8; 1024];
     loop {
         let n = match (&curr_client.stream).read(&mut buf) {
@@ -25,7 +25,7 @@ fn handle_clients(mut curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
             let mut i = 0;
             let mut clients_lock = clients.lock().unwrap();
             for strm in clients_lock.iter() {
-                if strm.stream.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                if strm.stream.peer_addr().unwrap() == (&curr_client.stream).peer_addr().unwrap() {
                     break;
                 }
                 i += 1;
@@ -37,7 +37,7 @@ fn handle_clients(mut curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
         {
             let clients_lock = clients.lock().unwrap();
             for strm in clients_lock.iter() {
-                if strm.stream.peer_addr().unwrap() == stream.peer_addr().unwrap() {
+                if strm.stream.peer_addr().unwrap() == (&curr_client.stream).peer_addr().unwrap() {
                     continue;
                 }
                 match (&strm.stream).write_all(&data) {
@@ -57,7 +57,7 @@ fn perform_handshake(mut stream: TcpStream, id: Arc<AtomicUsize>) -> Result<Clie
         stream.write_all("Enter a username: ".as_bytes()).unwrap();
         let mut buf = [0u8; 1024];
         let temp_name = match stream.read(&mut buf) {
-            Ok(n) => String::from_utf8_lossy(&buf[..n]).to_string(),
+            Ok(n) => String::from_utf8_lossy(&buf[..n]).trim().to_string(),
             Err(_) => return Err(WireError::InvalidNameError),
         };
         temp_name
@@ -79,8 +79,6 @@ fn main() -> std::io::Result<()> {
     for stream in srvr.incoming() {
         match stream {
             Ok(s) => {
-                count_client += 1;
-                println!("Client {} connected", count_client);
                 let id_clone = Arc::clone(&id);
                 let client_stream = s.try_clone().expect("Failed to clone stream");
                 let curr_cli = match perform_handshake(client_stream, id_clone) {
@@ -90,6 +88,8 @@ fn main() -> std::io::Result<()> {
                         continue;
                     }
                 };
+                count_client += 1;
+                println!("Client {}: {} connected", count_client, &curr_cli.username);
 
                 {
                     let mut client_lock = clients.lock().unwrap();
