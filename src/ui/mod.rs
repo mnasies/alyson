@@ -14,12 +14,17 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> std::i
 
         if let Event::Key(key) = event::read()? {
             // events
-            if key.code == KeyCode::Char('q') {
-                break; // respond
-            } else if key.code == KeyCode::Char('i') {
-                main_app.increment();
-            } else if key.code == KeyCode::Char('d') {
-                main_app.decrement();
+            match key.code {
+                KeyCode::Char('q') => break,
+                KeyCode::Up => main_app.increment_option_selected(),
+                KeyCode::Down => main_app.decrement_option_selected(),
+                KeyCode::Enter => {
+                    if main_app.option_selected == 1 {
+                        break;
+                    }
+                    main_app.screen = app::Screen::Dashboard;
+                }
+                _ => {}
             }
         }
     }

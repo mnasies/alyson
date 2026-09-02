@@ -7,7 +7,6 @@ use std::io::stdout;
 use wire_chat_rs::ui::run;
 
 fn main() -> std::io::Result<()> {
-    println!("Hello, world!");
     // --- setup ---
     enable_raw_mode()?;
     let mut stdout = stdout();
