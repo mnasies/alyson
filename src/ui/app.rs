@@ -17,14 +17,23 @@ pub enum InputMode {
     Typing,
 }
 
+pub enum Focus {
+    Main,
+    ClientList,
+    ClientOption,
+    None,
+}
+
 pub struct App {
     pub screen: Screen,
     pub option_selected: usize,
     pub input_mode: InputMode,
     pub clients: Vec<ClientSummary>,
     pub client_selected: usize,
+    pub cli_opt_selected: Option<usize>,
     pub shared_clients: Arc<Mutex<Vec<Client>>>,
     pub new_client_name: String,
+    pub focus: Focus,
 }
 
 impl App {
@@ -35,8 +44,10 @@ impl App {
             input_mode: InputMode::Selecting,
             clients: Vec::new(),
             client_selected: 0,
+            cli_opt_selected: None,
             shared_clients,
             new_client_name: String::new(),
+            focus: Focus::None,
         }
     }
 
@@ -49,17 +60,5 @@ impl App {
                 name: c.username.clone(),
             })
             .collect();
-    }
-
-    pub fn increment_option_selected(&mut self) {
-        if self.option_selected > 0 {
-            self.option_selected -= 1;
-        }
-    }
-
-    pub fn decrement_option_selected(&mut self) {
-        if self.option_selected < 1 {
-            self.option_selected += 1;
-        }
     }
 }

@@ -97,9 +97,17 @@ pub fn handle_clients(curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
     }
 }
 
-pub fn perform_handshake(mut stream: TcpStream, id: Arc<AtomicUsize>) -> Result<Client, WireError> {
+pub fn spawn_client(name: String) {
+    thread::spawn(move || {
+        if let Ok(stream) = TcpStream::connect("127.0.0.1:0") {
+            // send name as your handshake protocol expects, e.g.:
+            let _ = (&stream).write_all(format!("{}\n", name).as_bytes());
+        }
+    });
+}
+
+pub fn perform_handshake(stream: TcpStream, id: Arc<AtomicUsize>) -> Result<Client, WireError> {
     let username: String = {
-        stream.write_all("Enter a username: ".as_bytes()).unwrap();
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
         match reader.read_line(&mut line) {

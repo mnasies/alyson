@@ -1,5 +1,5 @@
+use crate::ui::app;
 use crate::ui::app::App;
-use crate::ui::app::ClientSummary;
 use crate::ui::app::Screen;
 
 use ratatui::layout::Rect;
@@ -52,9 +52,7 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
 
 fn draw_dashboard(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let block_left = Block::default()
-        .title(" ALL CLIENTS ")
-        .borders(Borders::ALL);
+    let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -73,18 +71,39 @@ fn draw_dashboard(frame: &mut Frame, app: &App) {
         .split(outer[0]);
 
     draw_client_sidebar(frame, chunks[0], &app);
+    draw_main_pane(frame, chunks[1], &app);
 
-    let client_info =
-        Paragraph::new("Wire\n\nA TCP networking sandbox for learning.\n").block(block_left);
-    frame.render_widget(client_info, chunks[1]);
     let help_info =
         Paragraph::new("Use ↑↓ to navigate,  press 'Enter' to select,  'n' - new client, 'r' - new room, 'q' - quit")
             .block(Block::default().borders(Borders::ALL));
     frame.render_widget(help_info, outer[1]);
 }
 
+fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
+    let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
+
+    let content = match app.input_mode {
+        app::InputMode::Typing => {
+            format!("New client name:\n\n{}_", app.new_client_name)
+        }
+        app::InputMode::Selecting => {
+            "Select a client, or choose an action from the sidebar.".to_string()
+        }
+    };
+
+    let info = Paragraph::new(content).block(block_left);
+    frame.render_widget(info, canvas);
+}
+
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
-    let block_right = Block::default().title(" WIRE-CHAT ").borders(Borders::ALL);
+    let block_right = Block::default()
+        .title(" ALL CLIENTS ")
+        .borders(Borders::ALL);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(canvas);
+
     let clients = &app.clients;
     let client_list: Vec<ListItem> = clients
         .iter()
@@ -100,5 +119,29 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
         .collect();
     let list = List::new(client_list).block(block_right);
 
-    frame.render_widget(list, canvas);
+    frame.render_widget(list, chunks[0]);
+
+    let options = vec![
+        String::from("New Client"),
+        String::from("Create New Chat Room"),
+    ];
+    let cli_opt_list: Vec<ListItem> = options
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            let style = match app.cli_opt_selected {
+                Some(n) => {
+                    if i == n {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
+            };
+            ListItem::new(opt.clone()).style(style)
+        })
+        .collect();
+    let list = List::new(cli_opt_list).block(Block::default().borders(Borders::ALL));
+    frame.render_widget(list, chunks[1]);
 }
