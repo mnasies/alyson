@@ -1,5 +1,6 @@
 use crate::WireError;
 use crate::client::Client;
+
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
