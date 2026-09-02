@@ -8,13 +8,15 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 use std::thread;
 
-pub fn run_server() -> Result<(), Box<dyn std::error::Error>> {
-    let srvr = TcpListener::bind("127.0.0.1:0")?;
+pub fn run_server(
+    port: &str,
+    clients: Arc<Mutex<Vec<Client>>>,
+    id: Arc<AtomicUsize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let srvr = TcpListener::bind(port)?;
 
-    println!("port number: {}", TcpListener::local_addr(&srvr)?);
+    // println!("port number: {}", TcpListener::local_addr(&srvr)?);
 
-    let clients = Arc::new(Mutex::new(Vec::<Client>::new()));
-    let id = Arc::new(AtomicUsize::new(0));
     let mut count_client = 0;
 
     for stream in srvr.incoming() {

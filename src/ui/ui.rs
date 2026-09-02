@@ -1,6 +1,8 @@
 use crate::ui::app::App;
+use crate::ui::app::ClientSummary;
 use crate::ui::app::Screen;
 
+use ratatui::layout::Rect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -50,7 +52,6 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
 
 fn draw_dashboard(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let block_right = Block::default().title(" WIRE-CHAT ").borders(Borders::ALL);
     let block_left = Block::default()
         .title(" ALL CLIENTS ")
         .borders(Borders::ALL);
@@ -71,12 +72,33 @@ fn draw_dashboard(frame: &mut Frame, app: &App) {
         ])
         .split(outer[0]);
 
-    frame.render_widget(block_right, chunks[0]);
+    draw_client_sidebar(frame, chunks[0], &app);
+
     let client_info =
         Paragraph::new("Wire\n\nA TCP networking sandbox for learning.\n").block(block_left);
     frame.render_widget(client_info, chunks[1]);
     let help_info =
-        Paragraph::new("Use ↑↓ to navigate,  press 'Enter' to select,  'n' - new,  'q' - quit")
+        Paragraph::new("Use ↑↓ to navigate,  press 'Enter' to select,  'n' - new client, 'r' - new room, 'q' - quit")
             .block(Block::default().borders(Borders::ALL));
     frame.render_widget(help_info, outer[1]);
+}
+
+fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
+    let block_right = Block::default().title(" WIRE-CHAT ").borders(Borders::ALL);
+    let clients = &app.clients;
+    let client_list: Vec<ListItem> = clients
+        .iter()
+        .enumerate()
+        .map(|(i, cli)| {
+            let style = if i == app.client_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            ListItem::new(cli.name.clone()).style(style)
+        })
+        .collect();
+    let list = List::new(client_list).block(block_right);
+
+    frame.render_widget(list, canvas);
 }
