@@ -1,6 +1,7 @@
 pub mod app;
 pub mod ui;
 
+use crate::client;
 use crate::client::Client;
 use crate::network::NetworkHandle;
 pub use app::App;
@@ -23,6 +24,10 @@ pub fn run(
     loop {
         main_app.refresh_clients();
         terminal.draw(|frame| ui(frame, &main_app))?; // draw
+
+        if !event::poll(std::time::Duration::from_millis(16))? {
+            continue;
+        }
 
         if let Event::Key(key) = event::read()? {
             if matches!(main_app.input_mode, app::InputMode::Typing) {
@@ -89,18 +94,28 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
     match main_app.focus {
         app::Focus::ClientList => match key.code {
             KeyCode::Up => {
-                if main_app.client_selected > 0 {
-                    main_app.client_selected -= 1;
+                let cli = match main_app.client_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if cli > 0 {
+                    main_app.client_selected = Some(cli - 1);
                 }
             }
             KeyCode::Down => {
+                let cli = match main_app.client_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
                 let last_index = main_app.clients.len().saturating_sub(1);
-                if main_app.client_selected == last_index {
+                if cli == last_index {
                     main_app.focus = app::Focus::ClientOption;
+                    main_app.client_selected = None;
                     main_app.cli_opt_selected = Some(0);
+                    return;
                 }
-                if main_app.client_selected < last_index {
-                    main_app.client_selected += 1;
+                if cli < last_index {
+                    main_app.client_selected = Some(cli + 1);
                 }
             }
 
@@ -110,7 +125,10 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
             KeyCode::Up => {
                 if main_app.cli_opt_selected == Some(0) {
                     main_app.cli_opt_selected = None;
+                    let last_index = main_app.clients.len().saturating_sub(1);
+                    main_app.client_selected = Some(last_index);
                     main_app.focus = app::Focus::ClientList;
+                    return;
                 }
                 let cli_opt = match main_app.cli_opt_selected {
                     Some(n) => n,

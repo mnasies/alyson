@@ -31,8 +31,6 @@ impl NetworkHandle {
         let port = TcpListener::local_addr(&srvr)?.to_string();
         *self.port.lock().unwrap() = Some(port);
 
-        let mut count_client = 0;
-
         for stream in srvr.incoming() {
             match stream {
                 Ok(s) => {
@@ -44,13 +42,11 @@ impl NetworkHandle {
                             continue;
                         }
                     };
-                    count_client += 1;
-                    println!("Client {}: {} connected", count_client, &curr_cli.username);
 
                     {
                         let mut client_lock = self.clients.lock().unwrap();
                         client_lock.push(curr_cli.clone());
-                        println!("run_server: clients now = {}", client_lock.len());
+                        // println!("run_server: clients now = {}", client_lock.len());
                     }
 
                     let clients_clone = Arc::clone(&self.clients);
@@ -144,7 +140,6 @@ impl NetworkHandle {
             match reader.read_line(&mut line) {
                 Ok(_) => {
                     let name = line.trim().to_string();
-                    println!("Username: {}", name);
                     name
                 }
                 Err(_) => {

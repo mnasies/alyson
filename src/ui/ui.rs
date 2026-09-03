@@ -108,10 +108,15 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, cli)| {
-            let style = if i == app.client_selected {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
+            let style = match app.client_selected {
+                Some(n) => {
+                    if i == n {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
             };
             ListItem::new(cli.name.clone()).style(style)
         })
