@@ -6,6 +6,8 @@ use std::time::Instant;
 pub struct ClientSummary {
     pub id: usize,
     pub name: String,
+    pub ip: String,
+    pub port: u16,
 }
 
 pub enum Screen {
@@ -19,6 +21,11 @@ pub enum InputMode {
     Typing,
 }
 
+pub enum DashBoardView {
+    Idle,
+    ClientView(usize),
+}
+
 pub enum Focus {
     Main,
     ClientList,
@@ -30,9 +37,11 @@ pub struct App {
     pub screen: Screen,
     pub option_selected: usize,
     pub input_mode: InputMode,
+    pub dashboard_view: DashBoardView,
     pub clients: Vec<ClientSummary>,
     pub client_selected: Option<usize>,
     pub cli_opt_selected: Option<usize>,
+    pub action_selected: Option<usize>,
     pub shared_clients: Arc<Mutex<Vec<Client>>>,
     pub new_client_name: String,
     pub focus: Focus,
@@ -48,9 +57,11 @@ impl App {
             screen: Screen::Home,
             option_selected: 0,
             input_mode: InputMode::Selecting,
+            dashboard_view: DashBoardView::Idle,
             clients: Vec::new(),
             client_selected: Some(0),
             cli_opt_selected: None,
+            action_selected: None,
             shared_clients,
             new_client_name: String::new(),
             focus: Focus::None,
@@ -65,6 +76,8 @@ impl App {
             .map(|c| ClientSummary {
                 id: c.id,
                 name: c.username.clone(),
+                ip: c.ip.clone(),
+                port: c.port,
             })
             .collect();
     }

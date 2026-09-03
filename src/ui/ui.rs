@@ -81,16 +81,74 @@ fn draw_dashboard(frame: &mut Frame, app: &App) {
 fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
     let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
-    let content = match app.input_mode {
+    let mut info = Paragraph::new("");
+
+    match app.input_mode {
         app::InputMode::Typing => {
-            format!("New client name:\n\n{}_", app.new_client_name)
+            let content = format!("New client name:\n\n{}_", app.new_client_name);
+            info = Paragraph::new(content).block(block_left);
         }
-        app::InputMode::Selecting => {
-            "Select a client, or choose an action from the sidebar.".to_string()
-        }
+        app::InputMode::Selecting => match app.dashboard_view {
+            app::DashBoardView::Idle => {
+                let content = "Select a client, or choose an action from the sidebar.".to_string();
+                info = Paragraph::new(content).block(block_left);
+            }
+            app::DashBoardView::ClientView(id) => {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Percentage(75), // info text area
+                        Constraint::Percentage(25), // options list, takes remaining space
+                    ])
+                    .split(canvas);
+                let client_name = match app.clients.iter().find(|c| c.id == id) {
+                    Some(c) => c.name.clone(),
+                    None => "Unknown client".to_string(),
+                };
+                let upper_block = Block::default().title(client_name).borders(Borders::ALL);
+
+                let ip = match app.clients.iter().find(|c| c.id == id) {
+                    Some(c) => c.ip.clone(),
+                    None => "Unknown IP".to_string(),
+                };
+                let port = match app.clients.iter().find(|c| c.id == id) {
+                    Some(c) => c.port,
+                    None => 0,
+                };
+                
+
+                
+                let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
+
+                let actions = vec![
+                    String::from("Send Message"),
+                    String::from("Join A Chat Room"),
+                    String::from("Leave Chat Room"),
+                    String::from("Send Message in a Chat Room"),
+                ];
+                let action_list: Vec<ListItem> = actions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, act)| {
+                        let style = match app.action_selected {
+                            Some(n) => {
+                                if i == n {
+                                    Style::default().add_modifier(Modifier::REVERSED)
+                                } else {
+                                    Style::default()
+                                }
+                            }
+                            None => Style::default(),
+                        };
+                        ListItem::new(act.clone()).style(style)
+                    })
+                    .collect();
+                let actions_list = List::new(action_list).block(lower_block);
+                frame.render_widget(actions_list, chunks[1]);
+            }
+        },
     };
 
-    let info = Paragraph::new(content).block(block_left);
     frame.render_widget(info, canvas);
 }
 
