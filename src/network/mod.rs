@@ -26,7 +26,7 @@ impl NetworkHandle {
         }
     }
 
-    pub fn run_server(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run_server(&mut self) -> Result<(), WireError> {
         let srvr = TcpListener::bind("127.0.0.1:0")?;
         let port = TcpListener::local_addr(&srvr)?.to_string();
         *self.port.lock().unwrap() = Some(port);
@@ -54,8 +54,8 @@ impl NetworkHandle {
                         Self::handle_clients(curr_cli, clients_clone);
                     });
                 }
-                Err(_) => {
-                    println!("Socket accept failure!")
+                Err(e) => {
+                    return Err(WireError::TcpConnectionFailed(e));
                 }
             }
         }
@@ -109,7 +109,7 @@ impl NetworkHandle {
         }
     }
 
-    pub fn spawn_client(&mut self, name: String) {
+    pub fn spawn_client(&mut self, name: String) -> Result<(), WireError> {
         match self.port.lock().unwrap().clone() {
             Some(port) => {
                 // eprintln!("spawn_client: got port {}", port);
@@ -126,11 +126,12 @@ impl NetworkHandle {
                             thread::sleep(std::time::Duration::from_secs(3600));
                         }
                     }
-                    Err(e) => eprintln!("spawn_client: connect FAILED: {e}"),
+                    Err(e) => eprintln!("spawn_client: connect failed: {e}"),
                 });
             }
-            None => return,
+            None => return Err(WireError::PortNotAvailable),
         };
+        Ok(())
     }
 
     pub fn perform_handshake(&mut self, stream: TcpStream) -> Result<Client, WireError> {
@@ -143,8 +144,7 @@ impl NetworkHandle {
                     name
                 }
                 Err(_) => {
-                    eprintln!("Invalid Name");
-                    return Err(WireError::InvalidNameError);
+                    return Err(WireError::InvalidName);
                 }
             }
         };

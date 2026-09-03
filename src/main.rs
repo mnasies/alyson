@@ -4,6 +4,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
+use wire_chat_rs::WireError;
 use wire_chat_rs::ui::run;
 
 use std::sync::{Arc, Mutex};
@@ -11,7 +12,7 @@ use std::thread;
 use wire_chat_rs::client::Client;
 use wire_chat_rs::network::NetworkHandle;
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), WireError> {
     let clients = Arc::new(Mutex::new(Vec::<Client>::new()));
 
     let server_clients = Arc::clone(&clients);

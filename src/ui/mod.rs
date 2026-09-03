@@ -1,7 +1,7 @@
 pub mod app;
 pub mod ui;
 
-use crate::client;
+use crate::WireError;
 use crate::client::Client;
 use crate::network::NetworkHandle;
 pub use app::App;
@@ -18,7 +18,7 @@ pub fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     clients: Arc<Mutex<Vec<Client>>>,
     mut net_handle: NetworkHandle,
-) -> std::io::Result<()> {
+) -> Result<(), WireError> {
     let mut main_app = App::new(clients);
 
     loop {
@@ -41,7 +41,7 @@ pub fn run(
                         main_app.input_mode = app::InputMode::Selecting;
                         if !name.is_empty() {
                             // actually create the client — network call, next
-                            net_handle.spawn_client(name);
+                            net_handle.spawn_client(name)?;
                         }
                         main_app.new_client_name.clear();
                     }
