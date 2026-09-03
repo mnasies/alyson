@@ -30,6 +30,7 @@ pub enum Focus {
     Main,
     ClientList,
     ClientOption,
+    ActionList,
     None,
 }
 

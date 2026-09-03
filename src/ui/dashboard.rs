@@ -40,17 +40,15 @@ pub fn draw_dashboard(frame: &mut Frame, app: &App) {
 fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
     let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
-    let mut info = Paragraph::new("");
+    let content;
 
     match app.input_mode {
         app::InputMode::Typing => {
-            let content = format!("New client name:\n\n{}_", app.new_client_name);
-            info = Paragraph::new(content).block(block_left);
+            content = format!("New client name:\n\n{}_", app.new_client_name);
         }
         app::InputMode::Selecting => match app.dashboard_view {
             app::DashBoardView::Idle => {
-                let content = "Select a client, or choose an action from the sidebar.".to_string();
-                info = Paragraph::new(content).block(block_left);
+                content = "Select a client, or choose an action from the sidebar.".to_string();
             }
             app::DashBoardView::ClientView(id) => {
                 draw_client_info(frame, canvas, app, id);
@@ -59,6 +57,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
         },
     };
 
+    let info = Paragraph::new(content).block(block_left);
     frame.render_widget(info, canvas);
 }
 

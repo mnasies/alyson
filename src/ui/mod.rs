@@ -146,6 +146,12 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 }
                 _ => {}
             },
+            KeyCode::Right => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.action_selected = Some(0);
+                main_app.cli_opt_selected = None;
+                main_app.client_selected = None;
+            }
 
             _ => {}
         },
@@ -180,6 +186,38 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.new_client_name.clear();
                 }
+            }
+            KeyCode::Right => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.action_selected = Some(0);
+                main_app.cli_opt_selected = None;
+                main_app.client_selected = None;
+            }
+            _ => {}
+        },
+        app::Focus::ActionList => match key.code {
+            KeyCode::Up => {
+                let action = match main_app.action_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if action > 0 {
+                    main_app.action_selected = Some(action - 1);
+                }
+            }
+            KeyCode::Down => {
+                let action = match main_app.action_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if action < 3 {
+                    main_app.action_selected = Some(action + 1);
+                }
+            }
+            KeyCode::Left => {
+                main_app.focus = app::Focus::ClientList;
+                main_app.action_selected = None;
+                main_app.client_selected = Some(0);
             }
             _ => {}
         },
