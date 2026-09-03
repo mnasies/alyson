@@ -1,4 +1,5 @@
 pub mod app;
+mod dashboard;
 pub mod ui;
 
 use crate::WireError;
@@ -138,6 +139,10 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     main_app.client_selected = Some(cli + 1);
                 }
             }
+            KeyCode::Enter => match main_app.cli_opt_selected {
+                Some(n) => {}
+                _ => {}
+            },
 
             _ => {}
         },
