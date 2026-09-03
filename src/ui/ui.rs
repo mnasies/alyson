@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
@@ -148,4 +148,25 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
         .collect();
     let list = List::new(cli_opt_list).block(Block::default().borders(Borders::ALL));
     frame.render_widget(list, chunks[1]);
+}
+
+pub fn draw_error_toast(frame: &mut Frame, app: &App) {
+    let errors = app.errors.lock().unwrap();
+    if let Some(latest) = errors.last() {
+        let area = frame.area();
+        let toast_area = Rect {
+            x: area.width.saturating_sub(40),
+            y: 0,
+            width: 40.min(area.width),
+            height: 3,
+        };
+        let block = Block::default()
+            .title(" Error ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red));
+        let text = Paragraph::new(latest.1.to_string())
+            .style(Style::default().fg(Color::Red))
+            .block(block);
+        frame.render_widget(text, toast_area);
+    }
 }

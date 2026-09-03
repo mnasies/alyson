@@ -1,6 +1,8 @@
 use crate::WireError;
 use crate::client::Client;
 
+use std::time::Instant;
+
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
@@ -14,15 +16,20 @@ pub struct NetworkHandle {
     pub port: Arc<Mutex<Option<String>>>, // set once run_server binds
     pub next_id: Arc<AtomicUsize>,
     pub client_ports: Arc<Mutex<Vec<String>>>,
+    pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
 }
 
 impl NetworkHandle {
-    pub fn new(clients: Arc<Mutex<Vec<Client>>>) -> Self {
+    pub fn new(
+        clients: Arc<Mutex<Vec<Client>>>,
+        errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+    ) -> Self {
         NetworkHandle {
             clients,
             port: Arc::new(Mutex::new(None)),
             next_id: Arc::new(AtomicUsize::new(0)),
             client_ports: Arc::new(Mutex::new(Vec::new())),
+            errors,
         }
     }
 
@@ -38,7 +45,7 @@ impl NetworkHandle {
                     let curr_cli = match Self::perform_handshake(self, client_stream) {
                         Ok(c) => c,
                         Err(e) => {
-                            println!("Handshake failure: {:?}", e);
+                            self.errors.lock().unwrap().push((Instant::now(), e));
                             continue;
                         }
                     };

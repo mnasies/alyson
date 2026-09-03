@@ -1,5 +1,7 @@
+use crate::WireError;
 use crate::client::Client;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 pub struct ClientSummary {
     pub id: usize,
@@ -34,10 +36,14 @@ pub struct App {
     pub shared_clients: Arc<Mutex<Vec<Client>>>,
     pub new_client_name: String,
     pub focus: Focus,
+    pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
 }
 
 impl App {
-    pub fn new(shared_clients: Arc<Mutex<Vec<Client>>>) -> Self {
+    pub fn new(
+        shared_clients: Arc<Mutex<Vec<Client>>>,
+        errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+    ) -> Self {
         App {
             screen: Screen::Home,
             option_selected: 0,
@@ -48,6 +54,7 @@ impl App {
             shared_clients,
             new_client_name: String::new(),
             focus: Focus::None,
+            errors,
         }
     }
 

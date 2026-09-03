@@ -7,6 +7,9 @@ use crate::network::NetworkHandle;
 pub use app::App;
 pub use app::Focus;
 use crossterm::event::KeyEvent;
+use std::time::Duration;
+use std::time::Instant;
+use ui::draw_error_toast;
 use ui::ui;
 
 use crossterm::event;
@@ -18,12 +21,23 @@ pub fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     clients: Arc<Mutex<Vec<Client>>>,
     mut net_handle: NetworkHandle,
+    errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
 ) -> Result<(), WireError> {
-    let mut main_app = App::new(clients);
+    let mut main_app = App::new(clients, errors);
+    // eprintln!("errors len: {}", main_app.errors.lock().unwrap().len());
 
     loop {
         main_app.refresh_clients();
-        terminal.draw(|frame| ui(frame, &main_app))?; // draw
+        main_app
+            .errors
+            .lock()
+            .unwrap()
+            .retain(|(t, _)| t.elapsed() < Duration::from_secs(5));
+
+        terminal.draw(|frame| {
+            ui(frame, &main_app);
+            draw_error_toast(frame, &main_app);
+        })?; // draw
 
         if !event::poll(std::time::Duration::from_millis(16))? {
             continue;
@@ -59,6 +73,12 @@ pub fn run(
             // events
             match main_app.screen {
                 app::Screen::Home => match key.code {
+                    KeyCode::Char('e') => {
+                        main_app.errors.lock().unwrap().push((
+                            std::time::Instant::now(),
+                            WireError::HandshakeFailed("test error".to_string()),
+                        ));
+                    }
                     KeyCode::Up => {
                         if main_app.option_selected > 0 {
                             main_app.option_selected -= 1;
