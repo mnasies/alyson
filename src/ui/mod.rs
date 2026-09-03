@@ -6,6 +6,7 @@ use crate::WireError;
 use crate::client::Client;
 use crate::network::NetworkHandle;
 pub use app::App;
+pub use app::DashBoardView;
 pub use app::Focus;
 use crossterm::event::KeyEvent;
 use std::time::Duration;
@@ -139,8 +140,10 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     main_app.client_selected = Some(cli + 1);
                 }
             }
-            KeyCode::Enter => match main_app.cli_opt_selected {
-                Some(n) => {}
+            KeyCode::Enter => match main_app.client_selected {
+                Some(n) => {
+                    main_app.dashboard_view = DashBoardView::ClientView(n);
+                }
                 _ => {}
             },
 

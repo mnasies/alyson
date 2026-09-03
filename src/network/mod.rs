@@ -156,8 +156,8 @@ impl NetworkHandle {
             }
         };
         let client_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let ip = stream.peer_addr()?.to_string();
-        let port = stream.local_addr()?.port();
+        let ip = stream.peer_addr()?.ip().to_string();
+        let port = stream.peer_addr()?.port();
         Result::<Client, WireError>::Ok(Client::new(client_id, username, stream, ip, port))
     }
 }

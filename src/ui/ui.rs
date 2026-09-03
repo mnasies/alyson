@@ -1,4 +1,3 @@
-use crate::ui::app;
 use crate::ui::app::App;
 use crate::ui::app::Screen;
 use crate::ui::dashboard::draw_dashboard;

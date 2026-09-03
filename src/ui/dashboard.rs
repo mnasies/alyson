@@ -53,60 +53,75 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
                 info = Paragraph::new(content).block(block_left);
             }
             app::DashBoardView::ClientView(id) => {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Percentage(75), // info text area
-                        Constraint::Percentage(25), // options list, takes remaining space
-                    ])
-                    .split(canvas);
-                let client_name = match app.clients.iter().find(|c| c.id == id) {
-                    Some(c) => c.name.clone(),
-                    None => "Unknown client".to_string(),
-                };
-                let upper_block = Block::default().title(client_name).borders(Borders::ALL);
-
-                let ip = match app.clients.iter().find(|c| c.id == id) {
-                    Some(c) => c.ip.clone(),
-                    None => "Unknown IP".to_string(),
-                };
-                let port = match app.clients.iter().find(|c| c.id == id) {
-                    Some(c) => c.port,
-                    None => 0,
-                };
-
-                let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
-
-                let actions = vec![
-                    String::from("Send Message"),
-                    String::from("Join A Chat Room"),
-                    String::from("Leave Chat Room"),
-                    String::from("Send Message in a Chat Room"),
-                ];
-                let action_list: Vec<ListItem> = actions
-                    .iter()
-                    .enumerate()
-                    .map(|(i, act)| {
-                        let style = match app.action_selected {
-                            Some(n) => {
-                                if i == n {
-                                    Style::default().add_modifier(Modifier::REVERSED)
-                                } else {
-                                    Style::default()
-                                }
-                            }
-                            None => Style::default(),
-                        };
-                        ListItem::new(act.clone()).style(style)
-                    })
-                    .collect();
-                let actions_list = List::new(action_list).block(lower_block);
-                frame.render_widget(actions_list, chunks[1]);
+                draw_client_info(frame, canvas, app, id);
+                return;
             }
         },
     };
 
     frame.render_widget(info, canvas);
+}
+
+fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(20), // info text area
+            Constraint::Percentage(80), // options list, takes remaining space
+        ])
+        .split(canvas);
+    let client_name = match app.clients.iter().find(|c| c.id == id) {
+        Some(c) => c.name.clone(),
+        None => "Unknown client".to_string(),
+    };
+    let upper_block = Block::default()
+        .title(client_name.clone())
+        .borders(Borders::ALL);
+
+    let ip = match app.clients.iter().find(|c| c.id == id) {
+        Some(c) => c.ip.clone(),
+        None => "Unknown IP".to_string(),
+    };
+    let port = match app.clients.iter().find(|c| c.id == id) {
+        Some(c) => c.port,
+        None => 0,
+    };
+    let info = format!(
+        "Client: {}    IP Address: {}    Port Number: {}",
+        client_name.clone(),
+        ip,
+        port
+    );
+    let info_block = Paragraph::new(info).block(upper_block);
+    frame.render_widget(info_block, chunks[0]);
+
+    let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
+
+    let actions = vec![
+        String::from("Send Message"),
+        String::from("Join A Chat Room"),
+        String::from("Leave Chat Room"),
+        String::from("Send Message in a Chat Room"),
+    ];
+    let action_list: Vec<ListItem> = actions
+        .iter()
+        .enumerate()
+        .map(|(i, act)| {
+            let style = match app.action_selected {
+                Some(n) => {
+                    if i == n {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
+            };
+            ListItem::new(act.clone()).style(style)
+        })
+        .collect();
+    let actions_list = List::new(action_list).block(lower_block);
+    frame.render_widget(actions_list, chunks[1]);
 }
 
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
