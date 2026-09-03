@@ -11,14 +11,15 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use wire_chat_rs::client::Client;
+use wire_chat_rs::network::NetworkHandle;
 
 fn main() -> std::io::Result<()> {
     let clients = Arc::new(Mutex::new(Vec::<Client>::new()));
-    let id = Arc::new(AtomicUsize::new(0));
 
     let server_clients = Arc::clone(&clients);
     thread::spawn(move || {
-        network::run_server("127.0.0.1:0", server_clients, id).unwrap();
+        let main_network_handle = NetworkHandle::new(server_clients);
+        main_network_handle.run_server().unwrap();
     });
 
     // --- setup ---
