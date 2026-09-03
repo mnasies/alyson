@@ -52,7 +52,6 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
 
 fn draw_dashboard(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
     let outer = Layout::default()
         .direction(Direction::Vertical)

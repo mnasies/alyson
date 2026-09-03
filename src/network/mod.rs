@@ -8,10 +8,12 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, atomic::Ordering};
 use std::thread;
 
+#[derive(Clone)]
 pub struct NetworkHandle {
     pub clients: Arc<Mutex<Vec<Client>>>,
-    pub port: Arc<Mutex<Option<u16>>>, // set once run_server binds
+    pub port: Arc<Mutex<Option<String>>>, // set once run_server binds
     pub next_id: Arc<AtomicUsize>,
+    pub client_ports: Arc<Mutex<Vec<String>>>,
 }
 
 impl NetworkHandle {
@@ -20,26 +22,22 @@ impl NetworkHandle {
             clients,
             port: Arc::new(Mutex::new(None)),
             next_id: Arc::new(AtomicUsize::new(0)),
+            client_ports: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    pub fn run_server(
-        port: &str,
-        clients: Arc<Mutex<Vec<Client>>>,
-        id: Arc<AtomicUsize>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let srvr = TcpListener::bind(port)?;
-
-        // println!("port number: {}", TcpListener::local_addr(&srvr)?);
+    pub fn run_server(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let srvr = TcpListener::bind("127.0.0.1:0")?;
+        let port = TcpListener::local_addr(&srvr)?.to_string();
+        *self.port.lock().unwrap() = Some(port);
 
         let mut count_client = 0;
 
         for stream in srvr.incoming() {
             match stream {
                 Ok(s) => {
-                    let id_clone = Arc::clone(&id);
                     let client_stream = s.try_clone().expect("Failed to clone stream");
-                    let curr_cli = match perform_handshake(client_stream, id_clone) {
+                    let curr_cli = match Self::perform_handshake(self, client_stream) {
                         Ok(c) => c,
                         Err(e) => {
                             println!("Handshake failure: {:?}", e);
@@ -50,13 +48,14 @@ impl NetworkHandle {
                     println!("Client {}: {} connected", count_client, &curr_cli.username);
 
                     {
-                        let mut client_lock = clients.lock().unwrap();
+                        let mut client_lock = self.clients.lock().unwrap();
                         client_lock.push(curr_cli.clone());
+                        println!("run_server: clients now = {}", client_lock.len());
                     }
 
-                    let clients_clone = Arc::clone(&clients);
+                    let clients_clone = Arc::clone(&self.clients);
                     thread::spawn(move || {
-                        handle_clients(curr_cli, clients_clone);
+                        Self::handle_clients(curr_cli, clients_clone);
                     });
                 }
                 Err(_) => {
@@ -114,25 +113,47 @@ impl NetworkHandle {
         }
     }
 
-    pub fn spawn_client(name: String) {
-        thread::spawn(move || {
-            if let Ok(stream) = TcpStream::connect("127.0.0.1:") {
-                // send name as your handshake protocol expects, e.g.:
-                let _ = (&stream).write_all(format!("{}\n", name).as_bytes());
+    pub fn spawn_client(&mut self, name: String) {
+        match self.port.lock().unwrap().clone() {
+            Some(port) => {
+                // eprintln!("spawn_client: got port {}", port);
+                let client_ports_clone = Arc::clone(&self.client_ports);
+                thread::spawn(move || match TcpStream::connect(&port) {
+                    Ok(mut stream) => {
+                        // eprintln!("spawn_client: connected");
+                        let msg = format!("{}\n", name);
+                        stream.write_all(msg.as_bytes()).unwrap();
+                        let cli_port = stream.local_addr().unwrap().to_string();
+                        client_ports_clone.lock().unwrap().push(cli_port);
+
+                        loop {
+                            thread::sleep(std::time::Duration::from_secs(3600));
+                        }
+                    }
+                    Err(e) => eprintln!("spawn_client: connect FAILED: {e}"),
+                });
             }
-        });
+            None => return,
+        };
     }
 
-    pub fn perform_handshake(stream: TcpStream, id: Arc<AtomicUsize>) -> Result<Client, WireError> {
+    pub fn perform_handshake(&mut self, stream: TcpStream) -> Result<Client, WireError> {
         let username: String = {
             let mut reader = BufReader::new(&stream);
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(_) => line.trim().to_string(),
-                Err(_) => return Err(WireError::InvalidNameError),
+                Ok(_) => {
+                    let name = line.trim().to_string();
+                    println!("Username: {}", name);
+                    name
+                }
+                Err(_) => {
+                    eprintln!("Invalid Name");
+                    return Err(WireError::InvalidNameError);
+                }
             }
         };
-        let client_id = id.fetch_add(1, Ordering::SeqCst);
+        let client_id = self.next_id.fetch_add(1, Ordering::SeqCst);
         Result::<Client, WireError>::Ok(Client::new(client_id, username, stream))
     }
 }

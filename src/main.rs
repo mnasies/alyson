@@ -4,10 +4,8 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
-use wire_chat_rs::network;
 use wire_chat_rs::ui::run;
 
-use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use wire_chat_rs::client::Client;
@@ -17,9 +15,10 @@ fn main() -> std::io::Result<()> {
     let clients = Arc::new(Mutex::new(Vec::<Client>::new()));
 
     let server_clients = Arc::clone(&clients);
+    let net_handle = NetworkHandle::new(server_clients);
+    let mut net_handle_clone = net_handle.clone();
     thread::spawn(move || {
-        let main_network_handle = NetworkHandle::new(server_clients);
-        main_network_handle.run_server().unwrap();
+        net_handle_clone.run_server().unwrap();
     });
 
     // --- setup ---
@@ -31,7 +30,8 @@ fn main() -> std::io::Result<()> {
 
     // --- run app ---
     let ui_clients = Arc::clone(&clients);
-    let result = run(&mut terminal, ui_clients);
+    let net_handle_clone_ui = net_handle.clone();
+    let result = run(&mut terminal, ui_clients, net_handle_clone_ui);
 
     // --- teardown (must run even on error, so terminal isn't left broken) ---
     disable_raw_mode()?;

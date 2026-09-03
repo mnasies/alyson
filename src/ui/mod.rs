@@ -2,7 +2,7 @@ pub mod app;
 pub mod ui;
 
 use crate::client::Client;
-use crate::network;
+use crate::network::NetworkHandle;
 pub use app::App;
 pub use app::Focus;
 use crossterm::event::KeyEvent;
@@ -16,11 +16,12 @@ use std::sync::{Arc, Mutex};
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     clients: Arc<Mutex<Vec<Client>>>,
+    mut net_handle: NetworkHandle,
 ) -> std::io::Result<()> {
     let mut main_app = App::new(clients);
-    main_app.refresh_clients();
 
     loop {
+        main_app.refresh_clients();
         terminal.draw(|frame| ui(frame, &main_app))?; // draw
 
         if let Event::Key(key) = event::read()? {
@@ -32,11 +33,11 @@ pub fn run(
                     }
                     KeyCode::Enter => {
                         let name = main_app.new_client_name.trim().to_string();
+                        main_app.input_mode = app::InputMode::Selecting;
                         if !name.is_empty() {
                             // actually create the client — network call, next
-                            network::spawn_client(name);
+                            net_handle.spawn_client(name);
                         }
-                        main_app.input_mode = app::InputMode::Selecting;
                         main_app.new_client_name.clear();
                     }
                     KeyCode::Esc => {
@@ -45,6 +46,7 @@ pub fn run(
                     }
                     _ => {}
                 }
+                continue;
             }
             if let KeyCode::Char('q') = key.code {
                 break;
@@ -93,11 +95,12 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
             }
             KeyCode::Down => {
                 let last_index = main_app.clients.len().saturating_sub(1);
-                if main_app.client_selected < last_index {
-                    main_app.client_selected += 1;
-                }
                 if main_app.client_selected == last_index {
                     main_app.focus = app::Focus::ClientOption;
+                    main_app.cli_opt_selected = Some(0);
+                }
+                if main_app.client_selected < last_index {
+                    main_app.client_selected += 1;
                 }
             }
 
@@ -105,15 +108,16 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
         },
         app::Focus::ClientOption => match key.code {
             KeyCode::Up => {
+                if main_app.cli_opt_selected == Some(0) {
+                    main_app.cli_opt_selected = None;
+                    main_app.focus = app::Focus::ClientList;
+                }
                 let cli_opt = match main_app.cli_opt_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if cli_opt > 0 {
                     main_app.cli_opt_selected = Some(cli_opt - 1);
-                }
-                if main_app.cli_opt_selected == Some(0) {
-                    main_app.focus = app::Focus::ClientList;
                 }
             }
             KeyCode::Down => {
