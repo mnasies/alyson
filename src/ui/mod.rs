@@ -16,11 +16,14 @@ use std::sync::{Arc, Mutex};
 
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    clients: Arc<Mutex<Vec<Client>>>,
     mut net_handle: NetworkHandle,
-    errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
 ) -> Result<(), WireError> {
-    let mut main_app = App::new(clients, errors);
+    let mut main_app = App::new(
+        net_handle.clients.clone(),
+        net_handle.errors.clone(),
+        net_handle.outgoing.clone(),
+        net_handle.inboxes.clone(),
+    );
     // eprintln!("errors len: {}", main_app.errors.lock().unwrap().len());
 
     loop {

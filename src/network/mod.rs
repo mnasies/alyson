@@ -23,16 +23,13 @@ pub struct NetworkHandle {
 }
 
 impl NetworkHandle {
-    pub fn new(
-        clients: Arc<Mutex<Vec<Client>>>,
-        errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
-    ) -> Self {
+    pub fn new() -> Self {
         NetworkHandle {
-            clients,
+            clients: Arc::new(Mutex::new(Vec::new())),
             port: Arc::new(Mutex::new(None)),
             next_id: Arc::new(AtomicUsize::new(0)),
             client_ports: Arc::new(Mutex::new(Vec::new())),
-            errors,
+            errors: Arc::new(Mutex::new(Vec::new())),
             inboxes: Arc::new(Mutex::new(Vec::new())),
             outgoing: Arc::new(Mutex::new(Vec::new())),
         }

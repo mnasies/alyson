@@ -1,5 +1,5 @@
 use crate::WireError;
-use crate::client::Client;
+use crate::client::{Client, InboxEntry};
 use crate::ui::NetworkHandle;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -93,12 +93,16 @@ pub struct App {
     pub buf: AppBuf,
     pub focus: Focus,
     pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+    pub outgoing: Arc<Mutex<Vec<InboxEntry>>>,
+    pub inboxes: Arc<Mutex<Vec<InboxEntry>>>,
 }
 
 impl App {
     pub fn new(
         shared_clients: Arc<Mutex<Vec<Client>>>,
         errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+        outgoing: Arc<Mutex<Vec<InboxEntry>>>,
+        inboxes: Arc<Mutex<Vec<InboxEntry>>>,
     ) -> Self {
         App {
             screen: Screen::Home,
@@ -114,6 +118,8 @@ impl App {
             buf: AppBuf::new(),
             focus: Focus::None,
             errors,
+            outgoing,
+            inboxes,
         }
     }
 
