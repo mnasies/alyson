@@ -1,11 +1,11 @@
 use crate::ui::app;
 use crate::ui::app::App;
 
-use ratatui::layout::Rect;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
+    text::Line,
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
@@ -98,9 +98,9 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
 
     let actions = vec![
         String::from("Send Message"),
-        String::from("Join A Chat Room"),
-        String::from("Leave Chat Room"),
-        String::from("Send Message in a Chat Room"),
+        String::from("Create Chat Room"),
+        String::from("Join Chat Room"),
+        String::from("See Joined Chat Rooms"),
     ];
     let action_list: Vec<ListItem> = actions
         .iter()
@@ -116,7 +116,8 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
                 }
                 None => Style::default(),
             };
-            ListItem::new(act.clone()).style(style)
+            let line = Line::from(act.clone()).alignment(Alignment::Left);
+            ListItem::new(line).style(style)
         })
         .collect();
     let actions_list = List::new(action_list).block(lower_block);
