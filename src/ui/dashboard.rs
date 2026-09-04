@@ -144,7 +144,7 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
                 }
             }
             let info = Paragraph::new(content).block(lower_block);
-            frame.render_widget(info, canvas);
+            frame.render_widget(info, chunks[1]);
         }
         _ => {}
     }

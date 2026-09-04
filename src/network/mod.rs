@@ -1,5 +1,6 @@
 use crate::WireError;
 use crate::client::Client;
+use crate::client::InboxEntry;
 
 use std::time::Instant;
 
@@ -17,6 +18,8 @@ pub struct NetworkHandle {
     pub next_id: Arc<AtomicUsize>,
     pub client_ports: Arc<Mutex<Vec<String>>>,
     pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+    pub inboxes: Arc<Mutex<Vec<InboxEntry>>>,
+    pub outgoing: Arc<Mutex<Vec<InboxEntry>>>,
 }
 
 impl NetworkHandle {
@@ -30,6 +33,8 @@ impl NetworkHandle {
             next_id: Arc::new(AtomicUsize::new(0)),
             client_ports: Arc::new(Mutex::new(Vec::new())),
             errors,
+            inboxes: Arc::new(Mutex::new(Vec::new())),
+            outgoing: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
