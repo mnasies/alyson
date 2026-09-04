@@ -5,17 +5,12 @@ pub mod ui;
 use crate::WireError;
 use crate::client::Client;
 use crate::network::NetworkHandle;
-pub use app::App;
-pub use app::DashBoardView;
-pub use app::Focus;
-use crossterm::event::KeyEvent;
-use std::time::Duration;
-use std::time::Instant;
-use ui::draw_error_toast;
-use ui::ui;
+pub use app::{App, DashBoardView, Focus, InputResult};
+use std::time::{Duration, Instant};
+use ui::{draw_error_toast, ui};
 
 use crossterm::event;
-use crossterm::event::{Event, KeyCode};
+use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::sync::{Arc, Mutex};
 
@@ -47,26 +42,7 @@ pub fn run(
 
         if let Event::Key(key) = event::read()? {
             if matches!(main_app.input_mode, app::InputMode::Typing) {
-                match key.code {
-                    KeyCode::Char(c) => main_app.new_client_name.push(c),
-                    KeyCode::Backspace => {
-                        main_app.new_client_name.pop();
-                    }
-                    KeyCode::Enter => {
-                        let name = main_app.new_client_name.trim().to_string();
-                        main_app.input_mode = app::InputMode::Selecting;
-                        if !name.is_empty() {
-                            // actually create the client — network call, next
-                            net_handle.spawn_client(name)?;
-                        }
-                        main_app.new_client_name.clear();
-                    }
-                    KeyCode::Esc => {
-                        main_app.input_mode = app::InputMode::Selecting;
-                        main_app.new_client_name.clear();
-                    }
-                    _ => {}
-                }
+                handle_input(&mut main_app, key, &mut net_handle)?;
                 continue;
             }
             if let KeyCode::Char('q') = key.code {
@@ -184,7 +160,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
             KeyCode::Enter => {
                 if let Some(0) = main_app.cli_opt_selected {
                     main_app.input_mode = app::InputMode::Typing;
-                    main_app.new_client_name.clear();
+                    main_app.buf.new_client_name.clear();
                 }
             }
             KeyCode::Right => {
@@ -219,9 +195,82 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.action_selected = None;
                 main_app.client_selected = Some(0);
             }
+            KeyCode::Enter => match main_app.action_selected {
+                Some(0) => {}
+                _ => {}
+            },
             _ => {}
         },
         app::Focus::None => {}
         _ => {}
+    }
+}
+
+fn handle_input(
+    main_app: &mut App,
+    key: KeyEvent,
+    net_handle: &mut NetworkHandle,
+) -> Result<(), WireError> {
+    match &main_app.action_state {
+        app::ActionState::None => loop {
+            match handle_basic_inputting(&mut main_app.buf.new_client_name, key) {
+                InputResult::Continue => continue,
+                InputResult::Submitted => {
+                    let name = main_app.buf.new_client_name.trim().to_string();
+                    main_app.input_mode = app::InputMode::Selecting;
+                    if !name.is_empty() {
+                        // actually create the client — network call, next
+                        net_handle.spawn_client(name)?;
+                    }
+                    main_app.buf.new_client_name.clear();
+                    break;
+                }
+                InputResult::Cancelled => {
+                    main_app.input_mode = app::InputMode::Selecting;
+                    break;
+                }
+            }
+        },
+        app::ActionState::SendMessage(id, step) => match step {
+            app::SendMsgStep::Target => loop {
+                match handle_basic_inputting(&mut main_app.buf.to_client, key) {
+                    InputResult::Continue => continue,
+                    InputResult::Submitted => {
+                        main_app.input_mode = app::InputMode::Typing;
+                        main_app.buf.to_client.clear();
+                        main_app.action_state =
+                            app::ActionState::SendMessage(*id, app::SendMsgStep::Message);
+                        break;
+                    }
+                    InputResult::Cancelled => {
+                        main_app.action_state = app::ActionState::None;
+                        main_app.input_mode = app::InputMode::Selecting;
+                        break;
+                    }
+                }
+            },
+            app::SendMsgStep::Message => {}
+        },
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_basic_inputting(buf: &mut String, key: KeyEvent) -> InputResult {
+    match key.code {
+        KeyCode::Char(c) => {
+            buf.push(c);
+            InputResult::Continue
+        }
+        KeyCode::Backspace => {
+            buf.pop();
+            InputResult::Continue
+        }
+        KeyCode::Enter => InputResult::Submitted,
+        KeyCode::Esc => {
+            buf.clear();
+            InputResult::Cancelled
+        }
+        _ => InputResult::Continue,
     }
 }

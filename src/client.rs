@@ -1,4 +1,25 @@
 use std::net::TcpStream;
+use std::time::Instant;
+
+pub struct InboxEntry {
+    pub time: Instant,
+    pub msg: String,
+    pub from: usize,       // Client ID
+    pub to: usize,         // Client ID or Room ID
+    pub cli_or_room: bool, // true = message is from Client (to: ClientID), false = vice-versa
+}
+
+impl InboxEntry {
+    pub fn new(time: Instant, msg: String, from: usize, to: usize, cli_or_room: bool) -> Self {
+        InboxEntry {
+            time,
+            msg,
+            from,
+            to,
+            cli_or_room,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Client {

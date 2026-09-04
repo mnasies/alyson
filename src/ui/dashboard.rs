@@ -1,5 +1,5 @@
 use crate::ui::app;
-use crate::ui::app::App;
+use crate::ui::app::{ActionState, ActionState::SendMessage, App, SendMsgStep};
 
 use ratatui::{
     Frame,
@@ -40,15 +40,23 @@ pub fn draw_dashboard(frame: &mut Frame, app: &App) {
 fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
     let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
-    let content;
-
     match app.input_mode {
-        app::InputMode::Typing => {
-            content = format!("New client name:\n\n{}_", app.new_client_name);
-        }
+        app::InputMode::Typing => match &app.action_state {
+            SendMessage(n, _s) => {
+                draw_client_info(frame, canvas, app, *n);
+            }
+            ActionState::None => {
+                let content = format!("New client name:\n\n{}_", app.buf.new_client_name);
+                let info = Paragraph::new(content).block(block_left);
+                frame.render_widget(info, canvas);
+            }
+            _ => {}
+        },
         app::InputMode::Selecting => match app.dashboard_view {
             app::DashBoardView::Idle => {
-                content = "Select a client, or choose an action from the sidebar.".to_string();
+                let content = "Select a client, or choose an action from the sidebar.".to_string();
+                let info = Paragraph::new(content).block(block_left);
+                frame.render_widget(info, canvas);
             }
             app::DashBoardView::ClientView(id) => {
                 draw_client_info(frame, canvas, app, id);
@@ -56,9 +64,6 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
             }
         },
     };
-
-    let info = Paragraph::new(content).block(block_left);
-    frame.render_widget(info, canvas);
 }
 
 fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
@@ -94,34 +99,55 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
     let info_block = Paragraph::new(info).block(upper_block);
     frame.render_widget(info_block, chunks[0]);
 
-    let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
+    match &app.action_state {
+        ActionState::None => {
+            let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
 
-    let actions = vec![
-        String::from("Send Message"),
-        String::from("Create Chat Room"),
-        String::from("Join Chat Room"),
-        String::from("See Joined Chat Rooms"),
-    ];
-    let action_list: Vec<ListItem> = actions
-        .iter()
-        .enumerate()
-        .map(|(i, act)| {
-            let style = match app.action_selected {
-                Some(n) => {
-                    if i == n {
-                        Style::default().add_modifier(Modifier::REVERSED)
-                    } else {
-                        Style::default()
-                    }
+            let actions = vec![
+                String::from("Send Message"),
+                String::from("Create Chat Room"),
+                String::from("Join Chat Room"),
+                String::from("See Joined Chat Rooms"),
+            ];
+            let action_list: Vec<ListItem> = actions
+                .iter()
+                .enumerate()
+                .map(|(i, act)| {
+                    let style = match app.action_selected {
+                        Some(n) => {
+                            if i == n {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default()
+                            }
+                        }
+                        None => Style::default(),
+                    };
+                    let line = Line::from(act.clone()).alignment(Alignment::Left);
+                    ListItem::new(line).style(style)
+                })
+                .collect();
+            let actions_list = List::new(action_list).block(lower_block);
+            frame.render_widget(actions_list, chunks[1]);
+        }
+        ActionState::SendMessage(_id, step) => {
+            let lower_block = Block::default()
+                .title(" Send Message ")
+                .borders(Borders::ALL);
+            let content;
+            match step {
+                SendMsgStep::Target => {
+                    content = format!("Client Name to Send Message:\n\n{}_", app.buf.to_client);
                 }
-                None => Style::default(),
-            };
-            let line = Line::from(act.clone()).alignment(Alignment::Left);
-            ListItem::new(line).style(style)
-        })
-        .collect();
-    let actions_list = List::new(action_list).block(lower_block);
-    frame.render_widget(actions_list, chunks[1]);
+                SendMsgStep::Message => {
+                    content = format!("Message to Send:\n\n{}_", app.buf.msg_to_client);
+                }
+            }
+            let info = Paragraph::new(content).block(lower_block);
+            frame.render_widget(info, canvas);
+        }
+        _ => {}
+    }
 }
 
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
