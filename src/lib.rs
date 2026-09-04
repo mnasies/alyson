@@ -10,6 +10,7 @@ pub enum WireError {
     TcpConnectionFailed(std::io::Error),
     Disconnected,
     PortNotAvailable,
+    ClientRegistrationTimeout,
 }
 
 impl From<std::io::Error> for WireError {
@@ -27,6 +28,7 @@ impl std::fmt::Display for WireError {
             WireError::Disconnected => write!(f, "client disconnected"),
             WireError::PortNotAvailable => write!(f, "port not available"),
             WireError::TcpConnectionFailed(e) => write!(f, "TCP connection failed: {e}"),
+            WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
         }
     }
 }

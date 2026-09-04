@@ -28,9 +28,7 @@ fn main() -> Result<(), WireError> {
     let mut terminal = Terminal::new(backend)?;
 
     // --- run app ---
-    let ui_clients = Arc::clone(&clients);
     let net_handle_clone_ui = net_handle.clone();
-    let ui_errors = Arc::clone(&errors);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run(&mut terminal, net_handle_clone_ui)
     }));

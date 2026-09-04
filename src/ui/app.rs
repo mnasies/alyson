@@ -1,6 +1,6 @@
 use crate::WireError;
 use crate::client::{Client, InboxEntry};
-use crate::ui::NetworkHandle;
+use crate::network::NetworkHandle;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 

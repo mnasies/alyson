@@ -2,7 +2,7 @@ use crate::WireError;
 use crate::client::Client;
 use crate::client::InboxEntry;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use std::io::Write;
 use std::io::{BufRead, BufReader};
@@ -118,24 +118,64 @@ impl NetworkHandle {
         }
     }
 
+    fn resolve_client_id(&self, local_port: u16) -> Result<usize, WireError> {
+        let timeout = Duration::from_millis(500);
+        let start = Instant::now();
+        loop {
+            if let Some(client) = self
+                .clients
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|c| c.port == local_port)
+            {
+                return Ok(client.id);
+            }
+            if start.elapsed() > timeout {
+                return Err(WireError::ClientRegistrationTimeout);
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     pub fn spawn_client(&mut self, name: String) -> Result<(), WireError> {
         match self.port.lock().unwrap().clone() {
             Some(port) => {
+                let mut stream = TcpStream::connect(&port)?;
+
                 // eprintln!("spawn_client: got port {}", port);
                 let client_ports_clone = Arc::clone(&self.client_ports);
-                thread::spawn(move || match TcpStream::connect(&port) {
-                    Ok(mut stream) => {
-                        // eprintln!("spawn_client: connected");
-                        let msg = format!("{}\n", name);
-                        stream.write_all(msg.as_bytes()).unwrap();
-                        let cli_port = stream.local_addr().unwrap().to_string();
-                        client_ports_clone.lock().unwrap().push(cli_port);
+                let inboxes = Arc::clone(&self.inboxes);
+                let mut reader = BufReader::new(stream.try_clone()?);
 
-                        loop {
-                            thread::sleep(std::time::Duration::from_secs(3600));
+                let msg = format!("{}\n", name);
+                stream.write_all(msg.as_bytes()).unwrap();
+                let addr = stream.local_addr()?;
+                client_ports_clone.lock().unwrap().push(addr.to_string());
+                let cli_port = addr.port();
+
+                let id = self.resolve_client_id(cli_port)?;
+
+                thread::spawn(move || {
+                    // eprintln!("spawn_client: connected");
+
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        match reader.read_line(&mut line) {
+                            Ok(0) => break, // connection closed
+                            Ok(_) => {
+                                inboxes.lock().unwrap().push(InboxEntry {
+                                    time: Instant::now(),
+                                    msg: line.trim().to_string(),
+                                    from: id, // or parse sender from the wire message
+                                    to: id,
+                                    cli_or_room: true,
+                                });
+                            }
+                            Err(_) => break,
                         }
                     }
-                    Err(e) => eprintln!("spawn_client: connect failed: {e}"),
                 });
             }
             None => return Err(WireError::PortNotAvailable),
