@@ -5,9 +5,9 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use tokio::sync::mpsc;
-use wire_chat_rs::WireError;
-use wire_chat_rs::network::{NetworkHandle, run_network_engine};
-use wire_chat_rs::ui::run;
+use alyson::WireError;
+use alyson::network::{NetworkHandle, run_network_engine};
+use alyson::ui::run;
 
 fn reset_terminal() {
     let _ = disable_raw_mode();

@@ -1,4 +1,4 @@
-use wire_chat_rs::network::{NetworkCommand, NetworkEvent, run_network_engine};
+use alyson::network::{NetworkCommand, NetworkEvent, run_network_engine};
 
 #[tokio::test]
 async fn test_spawn_client() {
