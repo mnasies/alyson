@@ -51,7 +51,7 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
 }
 
 pub fn draw_error_toast(frame: &mut Frame, app: &App) {
-    let errors = app.errors.lock().unwrap();
+    let errors = &app.errors;
     if let Some(latest) = errors.last() {
         let area = frame.area();
         let toast_area = Rect {

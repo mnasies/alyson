@@ -1,163 +1,345 @@
 use crate::WireError;
-use crate::client::Client;
+use crate::client::{Client, InboxEntry};
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use std::io::Write;
-use std::io::{BufRead, BufReader};
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex, atomic::Ordering};
-use std::thread;
+#[derive(Debug)]
+pub enum NetworkCommand {
+    SpawnClient { username: String },
+    SendMessage { client_id: usize, msg: String },
+}
+
+#[derive(Debug)]
+pub enum NetworkEvent {
+    ClientConnected {
+        id: usize,
+        username: String,
+        ip: String,
+        port: u16,
+    },
+    ClientDisconnected {
+        id: usize,
+    },
+    MessageReceived(InboxEntry),
+    ErrorOccurred(WireError),
+}
 
 #[derive(Clone)]
 pub struct NetworkHandle {
-    pub clients: Arc<Mutex<Vec<Client>>>,
-    pub port: Arc<Mutex<Option<String>>>, // set once run_server binds
-    pub next_id: Arc<AtomicUsize>,
-    pub client_ports: Arc<Mutex<Vec<String>>>,
-    pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
+    pub cmd_tx: Sender<NetworkCommand>,
 }
 
 impl NetworkHandle {
-    pub fn new(
-        clients: Arc<Mutex<Vec<Client>>>,
-        errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
-    ) -> Self {
-        NetworkHandle {
-            clients,
-            port: Arc::new(Mutex::new(None)),
-            next_id: Arc::new(AtomicUsize::new(0)),
-            client_ports: Arc::new(Mutex::new(Vec::new())),
-            errors,
-        }
+    pub fn new(cmd_tx: Sender<NetworkCommand>) -> Self {
+        NetworkHandle { cmd_tx }
     }
 
-    pub fn run_server(&mut self) -> Result<(), WireError> {
-        let srvr = TcpListener::bind("127.0.0.1:0")?;
-        let port = TcpListener::local_addr(&srvr)?.to_string();
-        *self.port.lock().unwrap() = Some(port);
+    pub fn spawn_client(&self, name: String) -> Result<(), WireError> {
+        self.cmd_tx
+            .try_send(NetworkCommand::SpawnClient { username: name })
+            .map_err(|_| WireError::PortNotAvailable)
+    }
+}
 
-        for stream in srvr.incoming() {
-            match stream {
-                Ok(s) => {
-                    let client_stream = s.try_clone().expect("Failed to clone stream");
-                    let curr_cli = match Self::perform_handshake(self, client_stream) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            self.errors.lock().unwrap().push((Instant::now(), e));
-                            continue;
+pub async fn run_network_engine(
+    mut cmd_rx: Receiver<NetworkCommand>,
+    event_tx: Sender<NetworkEvent>,
+) {
+    // 1. Bind TCP server to random port.
+    // These two failures are unrecoverable: the network engine cannot function
+    // without a listener, so we surface a fatal error and let the panic hook
+    // reset the terminal and exit.
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
+        Ok(l) => l,
+        Err(e) => {
+            panic!(
+                "fatal: could not bind TCP listener ({}). The network engine cannot start.",
+                e
+            );
+        }
+    };
+
+    let server_port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(e) => {
+            panic!(
+                "fatal: could not read local addr of TCP listener ({}). The network engine cannot start.",
+                e
+            );
+        }
+    };
+
+    // Map of active client connections on the server side
+    let clients: Arc<tokio::sync::Mutex<HashMap<usize, Client>>> =
+        Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let next_id = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // Spawn the server accept loop
+    let clients_clone = Arc::clone(&clients);
+    let next_id_clone = Arc::clone(&next_id);
+    let event_tx_clone = event_tx.clone();
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let clients_inner = Arc::clone(&clients_clone);
+                    let next_id_inner = Arc::clone(&next_id_clone);
+                    let event_tx_inner = event_tx_clone.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_incoming_connection(
+                            stream,
+                            clients_inner,
+                            next_id_inner,
+                            event_tx_inner.clone(),
+                        )
+                        .await
+                        {
+                            let _ = event_tx_inner.send(NetworkEvent::ErrorOccurred(e)).await;
                         }
-                    };
-
-                    {
-                        let mut client_lock = self.clients.lock().unwrap();
-                        client_lock.push(curr_cli.clone());
-                        // println!("run_server: clients now = {}", client_lock.len());
-                    }
-
-                    let clients_clone = Arc::clone(&self.clients);
-                    thread::spawn(move || {
-                        Self::handle_clients(curr_cli, clients_clone);
                     });
                 }
                 Err(e) => {
-                    return Err(WireError::TcpConnectionFailed(e));
+                    let _ = event_tx_clone
+                        .send(NetworkEvent::ErrorOccurred(WireError::TcpConnectionFailed(
+                            e,
+                        )))
+                        .await;
                 }
             }
         }
-        Ok(())
+    });
+
+    // Handle UI commands
+    while let Some(cmd) = cmd_rx.recv().await {
+        match cmd {
+            NetworkCommand::SpawnClient { username } => {
+                let event_tx_spawn = event_tx.clone();
+                let clients_spawn = Arc::clone(&clients);
+                tokio::spawn(async move {
+                    if let Err(e) = spawn_client_task(
+                        username,
+                        server_port,
+                        clients_spawn,
+                        event_tx_spawn.clone(),
+                    )
+                    .await
+                    {
+                        let _ = event_tx_spawn.send(NetworkEvent::ErrorOccurred(e)).await;
+                    }
+                });
+            }
+            NetworkCommand::SendMessage { client_id, msg } => {
+                let clients_lock = clients.lock().await;
+                if let Some(client) = clients_lock.get(&client_id) {
+                    let _ = client.writer.send(msg).await;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_incoming_connection(
+    stream: TcpStream,
+    clients: Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
+    next_id: Arc<std::sync::atomic::AtomicUsize>,
+    event_tx: Sender<NetworkEvent>,
+) -> Result<(), WireError> {
+    use tokio::io::AsyncBufReadExt;
+
+    // Read first line as username (handshake)
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = tokio::io::BufReader::new(reader);
+    let mut username = String::new();
+    match reader.read_line(&mut username).await {
+        Ok(_) => {
+            username = username.trim().to_string();
+        }
+        Err(_) => {
+            return Err(WireError::InvalidName);
+        }
+    }
+    if username.is_empty() {
+        return Err(WireError::InvalidName);
     }
 
-    pub fn handle_clients(curr_client: Client, clients: Arc<Mutex<Vec<Client>>>) {
-        let binding = &curr_client.stream.try_clone().unwrap();
-        let mut reader = BufReader::new(binding);
+    let client_id = next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let peer_addr = writer.peer_addr()?;
+    let ip = peer_addr.ip().to_string();
+    let port = peer_addr.port();
+
+    // Create client writer channel
+    let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<String>(32);
+
+    // Spawn the writer task for this client connection.
+    // If write_all fails (peer disconnected), surface a toast so the user
+    // knows about the failure. The reader task is the single source of truth
+    // for emitting ClientDisconnected, so this task does not duplicate it.
+    let event_tx_writer = event_tx.clone();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        while let Some(msg) = write_rx.recv().await {
+            let msg_newline = format!("{}\n", msg);
+            if writer.write_all(msg_newline.as_bytes()).await.is_err() {
+                let _ = event_tx_writer
+                    .send(NetworkEvent::ErrorOccurred(WireError::Disconnected))
+                    .await;
+                break;
+            }
+        }
+    });
+
+    let client = Client::new(
+        client_id,
+        username.clone(),
+        write_tx,
+        ip.clone(),
+        port,
+        false,
+    );
+    {
+        let mut lock = clients.lock().await;
+        lock.insert(client_id, client.clone());
+    }
+
+    // Notify UI of new connection
+    let _ = event_tx
+        .send(NetworkEvent::ClientConnected {
+            id: client_id,
+            username,
+            ip,
+            port,
+        })
+        .await;
+
+    // Spawn the reader task to read incoming data from this client connection (server perspective)
+    let clients_reader = Arc::clone(&clients);
+    let event_tx_reader = event_tx.clone();
+    tokio::spawn(async move {
         let mut line = String::new();
         loop {
             line.clear();
-            let bytes_read = match reader.read_line(&mut line) {
-                Ok(n) => n,
-                Err(_) => {
-                    println!("Couldn't read message from connected client!");
-                    0
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => {
+                    break;
                 }
-            };
-            if bytes_read == 0 {
-                let mut i = 0;
-                let mut clients_lock = clients.lock().unwrap();
-                for strm in clients_lock.iter() {
-                    if strm.stream.peer_addr().unwrap()
-                        == (&curr_client.stream).peer_addr().unwrap()
-                    {
-                        break;
-                    }
-                    i += 1;
-                }
-                clients_lock.remove(i);
-                break;
-            }
-            let msg = format!("{}\n", &line.trim_end());
-            let msg_bytes = &msg.as_bytes();
-            {
-                let clients_lock = clients.lock().unwrap();
-                for temp_client in clients_lock.iter() {
-                    if temp_client.id == curr_client.id {
-                        continue;
-                    }
-                    match (&temp_client.stream).write_all(&msg_bytes) {
-                        Ok(_) => {}
-                        Err(_) => {
-                            println!("Writing data to an initiated socket unsuccessful!");
+                Ok(_) => {
+                    let msg = line.trim_end().to_string();
+
+                    // Broadcast to other clients
+                    let msg_bytes = format!("{}\n", msg);
+                    let lock = clients_reader.lock().await;
+                    for (&temp_id, temp_client) in lock.iter() {
+                        if temp_id == client_id {
+                            continue;
+                        }
+                        // If a peer's channel is closed/full, surface it as a toast
+                        // instead of silently dropping the message.
+                        if temp_client.writer.send(msg_bytes.clone()).await.is_err() {
+                            let _ = event_tx_reader
+                                .send(NetworkEvent::ErrorOccurred(WireError::Disconnected))
+                                .await;
                         }
                     }
                 }
             }
-            println!("{}", &msg);
+        }
+
+        // Clean up client on disconnect
+        {
+            let mut lock = clients_reader.lock().await;
+            lock.remove(&client_id);
+        }
+        let _ = event_tx_reader
+            .send(NetworkEvent::ClientDisconnected { id: client_id })
+            .await;
+    });
+
+    Ok(())
+}
+
+async fn spawn_client_task(
+    username: String,
+    server_port: u16,
+    clients: Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
+    event_tx: Sender<NetworkEvent>,
+) -> Result<(), WireError> {
+    use tokio::io::AsyncBufReadExt;
+    use tokio::io::AsyncWriteExt;
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server_port)).await?;
+    let local_port = stream.local_addr()?.port();
+
+    // Handshake: write username
+    let handshake_msg = format!("{}\n", username);
+    stream.write_all(handshake_msg.as_bytes()).await?;
+
+    // Resolve client ID using local port
+    let client_id = resolve_client_id_by_port(&clients, local_port).await?;
+
+    let (reader, _writer) = stream.into_split();
+    // Keep the writer half alive for the lifetime of the reader task
+    // so the server-side read loop does not see a closed writer.
+    let mut _writer_keep_alive = Some(_writer);
+    let mut reader = tokio::io::BufReader::new(reader);
+
+    // Mark this client as a read-side (client-initiated) connection
+    {
+        let mut lock = clients.lock().await;
+        if let Some(client) = lock.get_mut(&client_id) {
+            client.read_side = true;
         }
     }
 
-    pub fn spawn_client(&mut self, name: String) -> Result<(), WireError> {
-        match self.port.lock().unwrap().clone() {
-            Some(port) => {
-                // eprintln!("spawn_client: got port {}", port);
-                let client_ports_clone = Arc::clone(&self.client_ports);
-                thread::spawn(move || match TcpStream::connect(&port) {
-                    Ok(mut stream) => {
-                        // eprintln!("spawn_client: connected");
-                        let msg = format!("{}\n", name);
-                        stream.write_all(msg.as_bytes()).unwrap();
-                        let cli_port = stream.local_addr().unwrap().to_string();
-                        client_ports_clone.lock().unwrap().push(cli_port);
-
-                        loop {
-                            thread::sleep(std::time::Duration::from_secs(3600));
-                        }
-                    }
-                    Err(e) => eprintln!("spawn_client: connect failed: {e}"),
-                });
-            }
-            None => return Err(WireError::PortNotAvailable),
-        };
-        Ok(())
-    }
-
-    pub fn perform_handshake(&mut self, stream: TcpStream) -> Result<Client, WireError> {
-        let username: String = {
-            let mut reader = BufReader::new(&stream);
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
+    tokio::spawn(async move {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    let name = line.trim().to_string();
-                    name
-                }
-                Err(_) => {
-                    return Err(WireError::InvalidName);
+                    let entry = InboxEntry {
+                        time: Instant::now(),
+                        msg: line.trim().to_string(),
+                        from: client_id,
+                        to: client_id,
+                        cli_or_room: true,
+                    };
+                    let _ = event_tx.send(NetworkEvent::MessageReceived(entry)).await;
                 }
             }
-        };
-        let client_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let ip = stream.peer_addr()?.ip().to_string();
-        let port = stream.peer_addr()?.port();
-        Result::<Client, WireError>::Ok(Client::new(client_id, username, stream, ip, port))
+        }
+        // Drop writer when reader exits, signalling end of client connection
+        // to the server-side writer task.
+        drop(_writer_keep_alive.take());
+        // Surface the disconnect to the UI as a toast + sidebar cleanup.
+        let _ = event_tx
+            .send(NetworkEvent::ClientDisconnected { id: client_id })
+            .await;
+    });
+
+    Ok(())
+}
+
+async fn resolve_client_id_by_port(
+    clients: &Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
+    local_port: u16,
+) -> Result<usize, WireError> {
+    let timeout = std::time::Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    loop {
+        {
+            let lock = clients.lock().await;
+            if let Some(client) = lock.values().find(|c| c.port == local_port) {
+                return Ok(client.id);
+            }
+        }
+        if start.elapsed() > timeout {
+            return Err(WireError::ClientRegistrationTimeout);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
