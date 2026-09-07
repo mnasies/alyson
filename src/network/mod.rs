@@ -49,24 +49,27 @@ pub async fn run_network_engine(
     mut cmd_rx: Receiver<NetworkCommand>,
     event_tx: Sender<NetworkEvent>,
 ) {
-    // 1. Bind TCP server to random port
+    // 1. Bind TCP server to random port.
+    // These two failures are unrecoverable: the network engine cannot function
+    // without a listener, so we surface a fatal error and let the panic hook
+    // reset the terminal and exit.
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {
-            let _ = event_tx
-                .send(NetworkEvent::ErrorOccurred(WireError::Io(e)))
-                .await;
-            return;
+            panic!(
+                "fatal: could not bind TCP listener ({}). The network engine cannot start.",
+                e
+            );
         }
     };
 
     let server_port = match listener.local_addr() {
         Ok(addr) => addr.port(),
         Err(e) => {
-            let _ = event_tx
-                .send(NetworkEvent::ErrorOccurred(WireError::Io(e)))
-                .await;
-            return;
+            panic!(
+                "fatal: could not read local addr of TCP listener ({}). The network engine cannot start.",
+                e
+            );
         }
     };
 
@@ -171,12 +174,19 @@ async fn handle_incoming_connection(
     // Create client writer channel
     let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<String>(32);
 
-    // Spawn the writer task for this client connection
+    // Spawn the writer task for this client connection.
+    // If write_all fails (peer disconnected), surface a toast so the user
+    // knows about the failure. The reader task is the single source of truth
+    // for emitting ClientDisconnected, so this task does not duplicate it.
+    let event_tx_writer = event_tx.clone();
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
         while let Some(msg) = write_rx.recv().await {
             let msg_newline = format!("{}\n", msg);
-            if let Err(_) = writer.write_all(msg_newline.as_bytes()).await {
+            if writer.write_all(msg_newline.as_bytes()).await.is_err() {
+                let _ = event_tx_writer
+                    .send(NetworkEvent::ErrorOccurred(WireError::Disconnected))
+                    .await;
                 break;
             }
         }
@@ -218,7 +228,6 @@ async fn handle_incoming_connection(
                 }
                 Ok(_) => {
                     let msg = line.trim_end().to_string();
-                    println!("{}", msg);
 
                     // Broadcast to other clients
                     let msg_bytes = format!("{}\n", msg);
@@ -227,7 +236,13 @@ async fn handle_incoming_connection(
                         if temp_id == client_id {
                             continue;
                         }
-                        let _ = temp_client.writer.send(msg_bytes.clone()).await;
+                        // If a peer's channel is closed/full, surface it as a toast
+                        // instead of silently dropping the message.
+                        if temp_client.writer.send(msg_bytes.clone()).await.is_err() {
+                            let _ = event_tx_reader
+                                .send(NetworkEvent::ErrorOccurred(WireError::Disconnected))
+                                .await;
+                        }
                     }
                 }
             }
@@ -298,7 +313,12 @@ async fn spawn_client_task(
             }
         }
         // Drop writer when reader exits, signalling end of client connection
+        // to the server-side writer task.
         drop(_writer_keep_alive.take());
+        // Surface the disconnect to the UI as a toast + sidebar cleanup.
+        let _ = event_tx
+            .send(NetworkEvent::ClientDisconnected { id: client_id })
+            .await;
     });
 
     Ok(())
