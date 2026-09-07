@@ -182,7 +182,14 @@ async fn handle_incoming_connection(
         }
     });
 
-    let client = Client::new(client_id, username.clone(), write_tx, ip.clone(), port);
+    let client = Client::new(
+        client_id,
+        username.clone(),
+        write_tx,
+        ip.clone(),
+        port,
+        false,
+    );
     {
         let mut lock = clients.lock().await;
         lock.insert(client_id, client.clone());
@@ -259,7 +266,18 @@ async fn spawn_client_task(
     let client_id = resolve_client_id_by_port(&clients, local_port).await?;
 
     let (reader, _writer) = stream.into_split();
+    // Keep the writer half alive for the lifetime of the reader task
+    // so the server-side read loop does not see a closed writer.
+    let mut _writer_keep_alive = Some(_writer);
     let mut reader = tokio::io::BufReader::new(reader);
+
+    // Mark this client as a read-side (client-initiated) connection
+    {
+        let mut lock = clients.lock().await;
+        if let Some(client) = lock.get_mut(&client_id) {
+            client.read_side = true;
+        }
+    }
 
     tokio::spawn(async move {
         let mut line = String::new();
@@ -279,6 +297,8 @@ async fn spawn_client_task(
                 }
             }
         }
+        // Drop writer when reader exits, signalling end of client connection
+        drop(_writer_keep_alive.take());
     });
 
     Ok(())
@@ -301,5 +321,76 @@ async fn resolve_client_id_by_port(
             return Err(WireError::ClientRegistrationTimeout);
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spawn_client() {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(100);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
+
+        tokio::spawn(run_network_engine(cmd_rx, event_tx));
+
+        cmd_tx
+            .send(NetworkCommand::SpawnClient {
+                username: "Alice".to_string(),
+            })
+            .await
+            .unwrap();
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("channel closed");
+
+        match event {
+            NetworkEvent::ClientConnected { username, .. } => {
+                assert_eq!(username, "Alice");
+            }
+            other => panic!("Unexpected event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spawn_multiple_clients() {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(100);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
+
+        tokio::spawn(run_network_engine(cmd_rx, event_tx));
+
+        for i in 0..5 {
+            cmd_tx
+                .send(NetworkCommand::SpawnClient {
+                    username: format!("Client{}", i),
+                })
+                .await
+                .unwrap();
+        }
+
+        let mut connected_count = 0;
+        for _ in 0..5 {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+                .await
+                .expect("timeout waiting for event")
+                .expect("channel closed");
+            if let NetworkEvent::ClientConnected { .. } = event {
+                connected_count += 1;
+            }
+        }
+        assert_eq!(connected_count, 5);
+
+        // No immediate ClientDisconnected should be emitted: the client-side
+        // writer is kept alive for the duration of the connection.
+        let next =
+            tokio::time::timeout(std::time::Duration::from_millis(200), event_rx.recv()).await;
+        assert!(
+            next.is_err() || matches!(next, Ok(None)),
+            "expected no immediate ClientDisconnected event, got: {:?}",
+            next
+        );
     }
 }

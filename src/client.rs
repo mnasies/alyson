@@ -28,6 +28,7 @@ pub struct Client {
     pub writer: tokio::sync::mpsc::Sender<String>,
     pub ip: String,
     pub port: u16,
+    pub read_side: bool,
 }
 
 impl Client {
@@ -37,6 +38,7 @@ impl Client {
         writer: tokio::sync::mpsc::Sender<String>,
         ip: String,
         port: u16,
+        read_side: bool,
     ) -> Self {
         Self {
             id,
@@ -44,6 +46,7 @@ impl Client {
             writer,
             ip,
             port,
+            read_side,
         }
     }
 }
