@@ -4,44 +4,37 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
+use tokio::sync::mpsc;
 use wire_chat_rs::WireError;
+use wire_chat_rs::network::{NetworkHandle, run_network_engine};
 use wire_chat_rs::ui::run;
 
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Instant;
-use wire_chat_rs::client::Client;
-use wire_chat_rs::network::NetworkHandle;
+#[tokio::main]
+async fn main() -> Result<(), WireError> {
+    // --- channels setup ---
+    let (cmd_tx, cmd_rx) = mpsc::channel(100);
+    let (event_tx, event_rx) = mpsc::channel(100);
 
-fn main() -> Result<(), WireError> {
-    let net_handle = NetworkHandle::new();
-    let mut net_handle_clone = net_handle.clone();
-    thread::spawn(move || {
-        net_handle_clone.run_server().unwrap();
-    });
+    let net_handle = NetworkHandle::new(cmd_tx);
 
-    // --- setup ---
+    // --- run network engine ---
+    tokio::spawn(run_network_engine(cmd_rx, event_tx));
+
+    // --- terminal setup ---
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // --- run app ---
-    let net_handle_clone_ui = net_handle.clone();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run(&mut terminal, net_handle_clone_ui)
-    }));
+    // --- run ui ---
+    // We don't use catch_unwind here because it's complicated with async,
+    // but we ensure teardown runs with a result-based approach.
+    let result = run(&mut terminal, net_handle, event_rx).await;
 
     // --- teardown (must run even on error, so terminal isn't left broken) ---
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    match result {
-        Ok(r) => r,
-        Err(err) => {
-            eprintln!("app panicked: {:?}", err);
-            Ok(())
-        }
-    }
+    result
 }
