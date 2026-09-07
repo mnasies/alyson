@@ -4,6 +4,27 @@ use crate::client::InboxEntry;
 
 use std::time::{Duration, Instant};
 
+#[derive(Debug)]
+pub enum NetworkCommand {
+    SpawnClient { username: String },
+    SendMessage { client_id: usize, msg: String },
+}
+
+#[derive(Debug)]
+pub enum NetworkEvent {
+    ClientConnected {
+        id: usize,
+        username: String,
+        ip: String,
+        port: u16,
+    },
+    ClientDisconnected {
+        id: usize,
+    },
+    MessageReceived(InboxEntry),
+    ErrorOccurred(WireError),
+}
+
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};

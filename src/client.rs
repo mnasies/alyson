@@ -1,6 +1,7 @@
 use std::net::TcpStream;
 use std::time::Instant;
 
+#[derive(Debug, Clone)]
 pub struct InboxEntry {
     pub time: Instant,
     pub msg: String,
