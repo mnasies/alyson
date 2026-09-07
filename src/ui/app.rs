@@ -1,7 +1,6 @@
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
+use crate::client::InboxEntry;
 use crate::network::NetworkHandle;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub struct ClientSummary {
