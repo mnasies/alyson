@@ -1,2 +1,6 @@
-# wire-chat-rs
-A multi-room TCP chat server written from scratch in Rust; includes raw sockets, custom wire protocol, no frameworks.
+# alyson
+
+A visual TUI TCP sandbox and multi-client netcat dashboard for testing, debugging,
+and visualizing TCP socket servers without juggling multiple terminal tabs.
+
+Built in Rust on top of `tokio` (async runtime + channels) and `ratatui` (terminal UI).

@@ -3,8 +3,7 @@ mod dashboard;
 pub mod ui;
 
 use crate::WireError;
-use crate::client::Client;
-use crate::network::NetworkHandle;
+use crate::network::{NetworkEvent, NetworkHandle};
 pub use app::{App, DashBoardView, Focus, InputResult};
 use std::time::{Duration, Instant};
 use ui::{draw_error_toast, ui};
@@ -12,79 +11,105 @@ use ui::{draw_error_toast, ui};
 use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::Receiver;
 
-pub fn run(
+pub async fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    mut net_handle: NetworkHandle,
+    net_handle: NetworkHandle,
+    mut event_rx: Receiver<NetworkEvent>,
 ) -> Result<(), WireError> {
-    let mut main_app = App::new(
-        net_handle.clients.clone(),
-        net_handle.errors.clone(),
-        net_handle.outgoing.clone(),
-        net_handle.inboxes.clone(),
-    );
-    // eprintln!("errors len: {}", main_app.errors.lock().unwrap().len());
+    let mut main_app = App::new();
 
     loop {
-        main_app.refresh_clients();
+        // Clean up old errors
         main_app
             .errors
-            .lock()
-            .unwrap()
             .retain(|(t, _)| t.elapsed() < Duration::from_secs(5));
 
         terminal.draw(|frame| {
             ui(frame, &main_app);
             draw_error_toast(frame, &main_app);
-        })?; // draw
+        })?;
 
-        if !event::poll(std::time::Duration::from_millis(16))? {
-            continue;
-        }
-
-        if let Event::Key(key) = event::read()? {
-            if matches!(main_app.input_mode, app::InputMode::Typing) {
-                handle_input(&mut main_app, key, &mut net_handle)?;
-                continue;
-            }
-            if let KeyCode::Char('q') = key.code {
-                break;
-            }
-            // events
-            match main_app.screen {
-                app::Screen::Home => match key.code {
-                    KeyCode::Char('e') => {
-                        main_app.errors.lock().unwrap().push((
-                            std::time::Instant::now(),
-                            WireError::HandshakeFailed("test error".to_string()),
-                        ));
-                    }
-                    KeyCode::Up => {
-                        if main_app.option_selected > 0 {
-                            main_app.option_selected -= 1;
+        // We use a combination of event polling and network event receiving.
+        // To avoid blocking the network events, we poll for crossterm events with a short timeout.
+        if event::poll(Duration::from_millis(16))? {
+            if let Event::Key(key) = event::read()? {
+                if matches!(main_app.input_mode, app::InputMode::Typing) {
+                    handle_input(&mut main_app, key, &net_handle)?;
+                    continue;
+                }
+                if let KeyCode::Char('q') = key.code {
+                    break;
+                }
+                // events
+                match main_app.screen {
+                    app::Screen::Home => match key.code {
+                        KeyCode::Char('e') => {
+                            main_app.errors.push((
+                                std::time::Instant::now(),
+                                WireError::HandshakeFailed("test error".to_string()),
+                            ));
                         }
-                    }
-                    KeyCode::Down => {
-                        if main_app.option_selected < 1 {
-                            main_app.option_selected += 1;
+                        KeyCode::Up => {
+                            if main_app.option_selected > 0 {
+                                main_app.option_selected -= 1;
+                            }
                         }
-                    }
-                    KeyCode::Enter => {
-                        if main_app.option_selected == 1 {
-                            break;
+                        KeyCode::Down => {
+                            if main_app.option_selected < 1 {
+                                main_app.option_selected += 1;
+                            }
                         }
-                        if !matches!(main_app.screen, app::Screen::Dashboard) {
-                            main_app.screen = app::Screen::Dashboard;
-                            main_app.focus = app::Focus::ClientList; // set once, on transition
+                        KeyCode::Enter => {
+                            if main_app.option_selected == 1 {
+                                break;
+                            }
+                            if !matches!(main_app.screen, app::Screen::Dashboard) {
+                                main_app.screen = app::Screen::Dashboard;
+                                main_app.focus = app::Focus::ClientList;
+                            }
                         }
+                        _ => {}
+                    },
+                    app::Screen::Dashboard => {
+                        handle_dashboard_events(key, &mut main_app);
                     }
                     _ => {}
-                },
-                app::Screen::Dashboard => {
-                    handle_dashboard_events(key, &mut main_app);
                 }
-                _ => {}
+            }
+        }
+
+        // Check for network events
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                NetworkEvent::ClientConnected {
+                    id,
+                    username,
+                    ip,
+                    port,
+                } => {
+                    main_app.clients.push(app::ClientSummary {
+                        id,
+                        name: username,
+                        ip,
+                        port,
+                    });
+                }
+                NetworkEvent::ClientDisconnected { id } => {
+                    main_app.clients.retain(|c| c.id != id);
+                    if let DashBoardView::ClientView(v_id) = main_app.dashboard_view {
+                        if v_id == id {
+                            main_app.dashboard_view = DashBoardView::Idle;
+                        }
+                    }
+                }
+                NetworkEvent::MessageReceived(entry) => {
+                    main_app.inboxes.push(entry);
+                }
+                NetworkEvent::ErrorOccurred(err) => {
+                    main_app.errors.push((Instant::now(), err));
+                }
             }
         }
     }
@@ -221,7 +246,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
 fn handle_input(
     main_app: &mut App,
     key: KeyEvent,
-    net_handle: &mut NetworkHandle,
+    net_handle: &NetworkHandle,
 ) -> Result<(), WireError> {
     let Some(buf) = main_app.current_input_mut() else {
         return Ok(());

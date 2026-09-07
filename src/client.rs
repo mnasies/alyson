@@ -1,6 +1,6 @@
-use std::net::TcpStream;
 use std::time::Instant;
 
+#[derive(Debug, Clone)]
 pub struct InboxEntry {
     pub time: Instant,
     pub msg: String,
@@ -21,35 +21,32 @@ impl InboxEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Client {
     pub id: usize,
     pub username: String,
-    pub stream: TcpStream,
+    pub writer: tokio::sync::mpsc::Sender<String>,
     pub ip: String,
     pub port: u16,
+    pub read_side: bool,
 }
 
 impl Client {
-    pub fn new(id: usize, username: String, stream: TcpStream, ip: String, port: u16) -> Self {
+    pub fn new(
+        id: usize,
+        username: String,
+        writer: tokio::sync::mpsc::Sender<String>,
+        ip: String,
+        port: u16,
+        read_side: bool,
+    ) -> Self {
         Self {
             id,
             username,
-            stream,
+            writer,
             ip,
             port,
-        }
-    }
-}
-
-impl Clone for Client {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            username: self.username.clone(),
-            stream: self.stream.try_clone().unwrap(),
-            ip: self.ip.clone(),
-            port: self.port,
+            read_side,
         }
     }
 }
