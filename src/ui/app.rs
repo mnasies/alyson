@@ -89,21 +89,14 @@ pub struct App {
     pub cli_opt_selected: Option<usize>,
     pub action_selected: Option<usize>,
     pub action_state: ActionState,
-    pub shared_clients: Arc<Mutex<Vec<Client>>>,
     pub buf: AppBuf,
     pub focus: Focus,
-    pub errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
-    pub outgoing: Arc<Mutex<Vec<InboxEntry>>>,
-    pub inboxes: Arc<Mutex<Vec<InboxEntry>>>,
+    pub errors: Vec<(Instant, WireError)>,
+    pub inboxes: Vec<InboxEntry>,
 }
 
 impl App {
-    pub fn new(
-        shared_clients: Arc<Mutex<Vec<Client>>>,
-        errors: Arc<Mutex<Vec<(Instant, WireError)>>>,
-        outgoing: Arc<Mutex<Vec<InboxEntry>>>,
-        inboxes: Arc<Mutex<Vec<InboxEntry>>>,
-    ) -> Self {
+    pub fn new() -> Self {
         App {
             screen: Screen::Home,
             option_selected: 0,
@@ -114,12 +107,10 @@ impl App {
             cli_opt_selected: None,
             action_selected: None,
             action_state: ActionState::None,
-            shared_clients,
             buf: AppBuf::new(),
             focus: Focus::None,
-            errors,
-            outgoing,
-            inboxes,
+            errors: Vec::new(),
+            inboxes: Vec::new(),
         }
     }
 
@@ -132,7 +123,7 @@ impl App {
         }
     }
 
-    pub fn advance_action(&mut self, net_handle: &mut NetworkHandle) -> Result<(), WireError> {
+    pub fn advance_action(&mut self, net_handle: &NetworkHandle) -> Result<(), WireError> {
         match &self.action_state {
             ActionState::None => {
                 let name = self.buf.new_client_name.trim().to_string();
@@ -148,7 +139,16 @@ impl App {
                 self.buf.to_client.clear();
                 self.action_state = ActionState::SendMessage(*id, SendMsgStep::Message);
             }
-            ActionState::SendMessage(_, SendMsgStep::Message) => {
+            ActionState::SendMessage(id, SendMsgStep::Message) => {
+                let msg = self.buf.msg_to_client.trim().to_string();
+                if !msg.is_empty() {
+                    let _ = net_handle.cmd_tx.blocking_send(
+                        crate::network::NetworkCommand::SendMessage {
+                            client_id: *id,
+                            msg,
+                        },
+                    );
+                }
                 self.input_mode = InputMode::Selecting;
                 self.buf.msg_to_client.clear();
                 self.action_state = ActionState::None;
@@ -156,18 +156,5 @@ impl App {
             _ => {}
         }
         Ok(())
-    }
-
-    pub fn refresh_clients(&mut self) {
-        let clients = self.shared_clients.lock().unwrap();
-        self.clients = clients
-            .iter()
-            .map(|c| ClientSummary {
-                id: c.id,
-                name: c.username.clone(),
-                ip: c.ip.clone(),
-                port: c.port,
-            })
-            .collect();
     }
 }

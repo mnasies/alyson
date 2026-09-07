@@ -91,7 +91,7 @@ pub async fn run_network_engine(
                             stream,
                             clients_inner,
                             next_id_inner,
-                            event_tx_inner,
+                            event_tx_inner.clone(),
                         )
                         .await
                         {
@@ -117,9 +117,13 @@ pub async fn run_network_engine(
                 let event_tx_spawn = event_tx.clone();
                 let clients_spawn = Arc::clone(&clients);
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        spawn_client_task(username, server_port, clients_spawn, event_tx_spawn)
-                            .await
+                    if let Err(e) = spawn_client_task(
+                        username,
+                        server_port,
+                        clients_spawn,
+                        event_tx_spawn.clone(),
+                    )
+                    .await
                     {
                         let _ = event_tx_spawn.send(NetworkEvent::ErrorOccurred(e)).await;
                     }
@@ -136,7 +140,7 @@ pub async fn run_network_engine(
 }
 
 async fn handle_incoming_connection(
-    mut stream: TcpStream,
+    stream: TcpStream,
     clients: Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
     next_id: Arc<std::sync::atomic::AtomicUsize>,
     event_tx: Sender<NetworkEvent>,
