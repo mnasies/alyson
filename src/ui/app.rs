@@ -141,12 +141,13 @@ impl App {
             ActionState::SendMessage(id, SendMsgStep::Message) => {
                 let msg = self.buf.msg_to_client.trim().to_string();
                 if !msg.is_empty() {
-                    let _ = net_handle.cmd_tx.blocking_send(
-                        crate::network::NetworkCommand::SendMessage {
-                            client_id: *id,
-                            msg,
-                        },
-                    );
+                    let _ =
+                        net_handle
+                            .cmd_tx
+                            .try_send(crate::network::NetworkCommand::SendMessage {
+                                client_id: *id,
+                                msg,
+                            });
                 }
                 self.input_mode = InputMode::Selecting;
                 self.buf.msg_to_client.clear();

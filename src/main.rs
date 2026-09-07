@@ -9,8 +9,20 @@ use wire_chat_rs::WireError;
 use wire_chat_rs::network::{NetworkHandle, run_network_engine};
 use wire_chat_rs::ui::run;
 
+fn reset_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), LeaveAlternateScreen);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), WireError> {
+    // --- panic hook setup to prevent breaking terminal on panic ---
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        reset_terminal();
+        original_hook(panic_info);
+    }));
+
     // --- channels setup ---
     let (cmd_tx, cmd_rx) = mpsc::channel(100);
     let (event_tx, event_rx) = mpsc::channel(100);
@@ -28,13 +40,10 @@ async fn main() -> Result<(), WireError> {
     let mut terminal = Terminal::new(backend)?;
 
     // --- run ui ---
-    // We don't use catch_unwind here because it's complicated with async,
-    // but we ensure teardown runs with a result-based approach.
     let result = run(&mut terminal, net_handle, event_rx).await;
 
-    // --- teardown (must run even on error, so terminal isn't left broken) ---
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    // --- teardown ---
+    reset_terminal();
 
     result
 }

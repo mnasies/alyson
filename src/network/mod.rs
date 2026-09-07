@@ -40,7 +40,7 @@ impl NetworkHandle {
 
     pub fn spawn_client(&self, name: String) -> Result<(), WireError> {
         self.cmd_tx
-            .blocking_send(NetworkCommand::SpawnClient { username: name })
+            .try_send(NetworkCommand::SpawnClient { username: name })
             .map_err(|_| WireError::PortNotAvailable)
     }
 }
