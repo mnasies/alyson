@@ -52,17 +52,17 @@ pub async fn run(
                             ));
                         }
                         KeyCode::Up => {
-                            if main_app.option_selected > 0 {
-                                main_app.option_selected -= 1;
+                            if main_app.selected.option_selected > 0 {
+                                main_app.selected.option_selected -= 1;
                             }
                         }
                         KeyCode::Down => {
-                            if main_app.option_selected < 1 {
-                                main_app.option_selected += 1;
+                            if main_app.selected.option_selected < 1 {
+                                main_app.selected.option_selected += 1;
                             }
                         }
                         KeyCode::Enter => {
-                            if main_app.option_selected == 1 {
+                            if main_app.selected.option_selected == 1 {
                                 break;
                             }
                             if !matches!(main_app.screen, app::Screen::Dashboard) {
@@ -98,7 +98,9 @@ pub async fn run(
                 }
                 NetworkEvent::ClientDisconnected { id } => {
                     main_app.clients.retain(|c| c.id != id);
-                    if let DashBoardView::ClientView(v_id) = main_app.dashboard_view {
+                    if let DashBoardView::ClientView(v_id, app::CurrentWindow::ActionList) =
+                        main_app.dashboard_view
+                    {
                         if v_id == id {
                             main_app.dashboard_view = DashBoardView::Idle;
                         }
@@ -120,122 +122,180 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
     match main_app.focus {
         app::Focus::ClientList => match key.code {
             KeyCode::Up => {
-                let cli = match main_app.client_selected {
+                let cli = match main_app.selected.client_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if cli > 0 {
-                    main_app.client_selected = Some(cli - 1);
+                    main_app.selected.client_selected = Some(cli - 1);
                 }
             }
             KeyCode::Down => {
-                let cli = match main_app.client_selected {
+                let cli = match main_app.selected.client_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 let last_index = main_app.clients.len().saturating_sub(1);
                 if cli == last_index {
                     main_app.focus = app::Focus::ClientOption;
-                    main_app.client_selected = None;
-                    main_app.cli_opt_selected = Some(0);
+                    main_app.selected.client_selected = None;
+                    main_app.selected.cli_opt_selected = Some(0);
                     return;
                 }
                 if cli < last_index {
-                    main_app.client_selected = Some(cli + 1);
+                    main_app.selected.client_selected = Some(cli + 1);
                 }
             }
-            KeyCode::Enter => match main_app.client_selected {
+            KeyCode::Enter => match main_app.selected.client_selected {
                 Some(n) => {
                     if let Some(client) = main_app.clients.get(n) {
-                        main_app.dashboard_view = DashBoardView::ClientView(client.id);
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(client.id, app::CurrentWindow::ActionList);
                     }
                 }
                 _ => {}
             },
             KeyCode::Right => {
-                main_app.focus = app::Focus::ActionList;
-                main_app.action_selected = Some(0);
-                main_app.cli_opt_selected = None;
-                main_app.client_selected = None;
+                match main_app.dashboard_view {
+                    DashBoardView::ClientView(_, app::CurrentWindow::ActionList) => {
+                        main_app.focus = app::Focus::ActionList;
+                        main_app.selected.action_selected = Some(0);
+                        main_app.selected.inbox_cli_selected = None;
+                    }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Inbox) => {
+                        main_app.focus = app::Focus::InboxCli;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.inbox_cli_selected = Some(0);
+                    }
+                    _ => {}
+                }
+                main_app.selected.cli_opt_selected = None;
+                main_app.selected.client_selected = None;
             }
 
             _ => {}
         },
         app::Focus::ClientOption => match key.code {
             KeyCode::Up => {
-                if main_app.cli_opt_selected == Some(0) {
-                    main_app.cli_opt_selected = None;
+                if main_app.selected.cli_opt_selected == Some(0) {
+                    main_app.selected.cli_opt_selected = None;
                     let last_index = main_app.clients.len().saturating_sub(1);
-                    main_app.client_selected = Some(last_index);
+                    main_app.selected.client_selected = Some(last_index);
                     main_app.focus = app::Focus::ClientList;
                     return;
                 }
-                let cli_opt = match main_app.cli_opt_selected {
+                let cli_opt = match main_app.selected.cli_opt_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if cli_opt > 0 {
-                    main_app.cli_opt_selected = Some(cli_opt - 1);
+                    main_app.selected.cli_opt_selected = Some(cli_opt - 1);
                 }
             }
             KeyCode::Down => {
-                let cli_opt = match main_app.cli_opt_selected {
+                let cli_opt = match main_app.selected.cli_opt_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if cli_opt < 1 {
-                    main_app.cli_opt_selected = Some(cli_opt + 1);
+                    main_app.selected.cli_opt_selected = Some(cli_opt + 1);
                 }
             }
             KeyCode::Enter => {
-                if let Some(0) = main_app.cli_opt_selected {
+                if let Some(0) = main_app.selected.cli_opt_selected {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.buf.new_client_name.clear();
                 }
             }
             KeyCode::Right => {
-                main_app.focus = app::Focus::ActionList;
-                main_app.action_selected = Some(0);
-                main_app.cli_opt_selected = None;
-                main_app.client_selected = None;
+                match main_app.dashboard_view {
+                    DashBoardView::ClientView(_, app::CurrentWindow::ActionList) => {
+                        main_app.focus = app::Focus::ActionList;
+                        main_app.selected.action_selected = Some(0);
+                        main_app.selected.inbox_cli_selected = None;
+                    }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Inbox) => {
+                        main_app.focus = app::Focus::InboxCli;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.inbox_cli_selected = Some(0);
+                    }
+                    _ => {}
+                }
+                main_app.selected.cli_opt_selected = None;
+                main_app.selected.client_selected = None;
             }
             _ => {}
         },
         app::Focus::ActionList => match key.code {
             KeyCode::Up => {
-                let action = match main_app.action_selected {
+                let action = match main_app.selected.action_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if action > 0 {
-                    main_app.action_selected = Some(action - 1);
+                    main_app.selected.action_selected = Some(action - 1);
                 }
             }
             KeyCode::Down => {
-                let action = match main_app.action_selected {
+                let action = match main_app.selected.action_selected {
                     Some(n) => n,
                     None => 0,
                 };
-                if action < 3 {
-                    main_app.action_selected = Some(action + 1);
+                if action < 2 {
+                    main_app.selected.action_selected = Some(action + 1);
                 }
             }
             KeyCode::Left => {
                 main_app.focus = app::Focus::ClientList;
-                main_app.action_selected = None;
-                main_app.client_selected = Some(0);
+                main_app.selected.action_selected = None;
+                main_app.selected.client_selected = Some(0);
             }
-            KeyCode::Enter => match main_app.action_selected {
+            KeyCode::Enter => match main_app.selected.action_selected {
                 Some(0) => {
-                    main_app.input_mode = app::InputMode::Typing;
-                    if let DashBoardView::ClientView(id) = main_app.dashboard_view {
+                    // main_app.input_mode = app::InputMode::Typing;
+                    if let DashBoardView::ClientView(id, app::CurrentWindow::ActionList) =
+                        main_app.dashboard_view
+                    {
                         main_app.action_state =
                             app::ActionState::SendMessage(id, app::SendMsgStep::Target);
-                        main_app.input_mode = app::InputMode::Typing;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.inbox_cli_selected = Some(0);
+                        main_app.focus = app::Focus::InboxCli;
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(id, app::CurrentWindow::Inbox);
                     }
                 }
                 _ => {}
             },
+            _ => {}
+        },
+        app::Focus::InboxCli => match key.code {
+            KeyCode::Up => {
+                let cli = match main_app.selected.inbox_cli_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if cli > 0 {
+                    main_app.selected.inbox_cli_selected = Some(cli - 1);
+                }
+            }
+            KeyCode::Down => {
+                let cli = match main_app.selected.inbox_cli_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                let last_index = main_app.clients.len().saturating_sub(1);
+                if cli < last_index {
+                    main_app.selected.inbox_cli_selected = Some(cli + 1);
+                }
+            }
+            KeyCode::Left => {
+                main_app.focus = app::Focus::ClientList;
+                main_app.selected.action_selected = None;
+                main_app.selected.client_selected = Some(0);
+                main_app.selected.inbox_cli_selected = None;
+            }
+            KeyCode::Enter => {}
             _ => {}
         },
         app::Focus::None => {}

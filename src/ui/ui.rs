@@ -37,7 +37,7 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, opt)| {
-            let style = if i == app.option_selected {
+            let style = if i == app.selected.option_selected {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
                 Style::default()

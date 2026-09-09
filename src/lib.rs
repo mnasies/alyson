@@ -2,12 +2,14 @@ pub mod client;
 pub mod network;
 pub mod ui;
 
-#[derive(Debug)]
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
 pub enum WireError {
-    Io(std::io::Error),
+    Io(Arc<std::io::Error>),
     InvalidName,
     HandshakeFailed(String),
-    TcpConnectionFailed(std::io::Error),
+    TcpConnectionFailed(Arc<std::io::Error>),
     Disconnected,
     PortNotAvailable,
     ClientRegistrationTimeout,
@@ -15,7 +17,7 @@ pub enum WireError {
 
 impl From<std::io::Error> for WireError {
     fn from(e: std::io::Error) -> Self {
-        WireError::Io(e)
+        WireError::Io(Arc::new(e))
     }
 }
 

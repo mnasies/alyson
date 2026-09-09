@@ -53,7 +53,7 @@ pub async fn run_network_engine(
     // These two failures are unrecoverable: the network engine cannot function
     // without a listener, so we surface a fatal error and let the panic hook
     // reset the terminal and exit.
-    let listener = match TcpListener::bind("127.0.0.1:443").await {
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {
             panic!(
@@ -82,6 +82,7 @@ pub async fn run_network_engine(
     let clients_clone = Arc::clone(&clients);
     let next_id_clone = Arc::clone(&next_id);
     let event_tx_clone = event_tx.clone();
+    // Server-side task that accepts incoming connections
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
@@ -105,7 +106,7 @@ pub async fn run_network_engine(
                 Err(e) => {
                     let _ = event_tx_clone
                         .send(NetworkEvent::ErrorOccurred(WireError::TcpConnectionFailed(
-                            e,
+                            Arc::new(e),
                         )))
                         .await;
                 }
@@ -294,6 +295,7 @@ async fn spawn_client_task(
         }
     }
 
+    // Client-side task that reads incoming messages from the server
     tokio::spawn(async move {
         let mut line = String::new();
         loop {
