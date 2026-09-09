@@ -53,7 +53,7 @@ pub async fn run_network_engine(
     // These two failures are unrecoverable: the network engine cannot function
     // without a listener, so we surface a fatal error and let the panic hook
     // reset the terminal and exit.
-    let listener = match TcpListener::bind("127.0.0.1:0").await {
+    let listener = match TcpListener::bind("127.0.0.1:443").await {
         Ok(l) => l,
         Err(e) => {
             panic!(
