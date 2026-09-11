@@ -10,7 +10,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[derive(Debug)]
 pub enum NetworkCommand {
     SpawnClient { username: String },
-    SendMessage { client_id: usize, msg: String },
+    SendMessage { to_client: usize, msg: String },
 }
 
 #[derive(Debug)]
@@ -41,6 +41,12 @@ impl NetworkHandle {
     pub fn spawn_client(&self, name: String) -> Result<(), WireError> {
         self.cmd_tx
             .try_send(NetworkCommand::SpawnClient { username: name })
+            .map_err(|_| WireError::PortNotAvailable)
+    }
+
+    pub fn send_message(&self, to_client: usize, msg: String) -> Result<(), WireError> {
+        self.cmd_tx
+            .try_send(NetworkCommand::SendMessage { to_client, msg })
             .map_err(|_| WireError::PortNotAvailable)
     }
 }
@@ -133,9 +139,9 @@ pub async fn run_network_engine(
                     }
                 });
             }
-            NetworkCommand::SendMessage { client_id, msg } => {
+            NetworkCommand::SendMessage { to_client, msg } => {
                 let clients_lock = clients.lock().await;
-                if let Some(client) = clients_lock.get(&client_id) {
+                if let Some(client) = clients_lock.get(&to_client) {
                     let _ = client.writer.send(msg).await;
                 }
             }

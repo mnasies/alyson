@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-pub fn ui(frame: &mut Frame, app: &App) {
+pub fn ui(frame: &mut Frame, app: &mut App) {
     match app.screen {
         Screen::Home => draw_homepage(frame, app),
         Screen::Dashboard => draw_dashboard(frame, app),

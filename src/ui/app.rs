@@ -3,6 +3,7 @@ use crate::client::InboxEntry;
 use crate::network::NetworkHandle;
 use std::time::Instant;
 
+#[derive(Clone)]
 pub struct ClientSummary {
     pub id: usize,
     pub name: String,
@@ -40,29 +41,29 @@ pub enum CurrentWindow {
 
 #[derive(Clone)]
 pub enum ActionState {
-    SendMessage(usize, SendMsgStep),
-    JoinChatRoom(usize, JoinRoomStep),
-    CreateChatRoom(usize, CreateRoomStep),
+    SendMessage,
+    JoinChatRoom,
+    CreateChatRoom,
     None,
 }
 
-#[derive(Clone)]
-pub enum SendMsgStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum SendMsgStep {
+//     Target,
+//     Message,
+// }
 
-#[derive(Clone)]
-pub enum JoinRoomStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum JoinRoomStep {
+//     Target,
+//     Message,
+// }
 
-#[derive(Clone)]
-pub enum CreateRoomStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum CreateRoomStep {
+//     Target,
+//     Message,
+// }
 
 pub enum Focus {
     Main,
@@ -70,6 +71,7 @@ pub enum Focus {
     ClientOption,
     ActionList,
     InboxCli,
+    InboxWindow,
     None,
 }
 
@@ -94,6 +96,7 @@ pub struct Selection {
     pub cli_opt_selected: Option<usize>,
     pub action_selected: Option<usize>,
     pub inbox_cli_selected: Option<usize>,
+    pub inbox_selected: bool,
     pub option_selected: usize,
 }
 
@@ -104,6 +107,7 @@ impl Selection {
             cli_opt_selected: None,
             action_selected: None,
             inbox_cli_selected: None,
+            inbox_selected: false,
             option_selected: 0,
         }
     }
@@ -120,6 +124,7 @@ pub struct App {
     pub focus: Focus,
     pub errors: Vec<(Instant, WireError)>,
     pub inboxes: Vec<InboxEntry>,
+    pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
 }
 
 impl App {
@@ -135,14 +140,14 @@ impl App {
             focus: Focus::None,
             errors: Vec::new(),
             inboxes: Vec::new(),
+            current_clients: (None, None),
         }
     }
 
     pub fn current_input_mut(&mut self) -> Option<&mut String> {
         match self.action_state {
             ActionState::None => Some(&mut self.buf.new_client_name),
-            ActionState::SendMessage(_, SendMsgStep::Target) => Some(&mut self.buf.to_client),
-            ActionState::SendMessage(_, SendMsgStep::Message) => Some(&mut self.buf.msg_to_client),
+            ActionState::SendMessage => Some(&mut self.buf.msg_to_client),
             _ => None,
         }
     }
@@ -172,36 +177,11 @@ impl App {
                 }
                 self.buf.new_client_name.clear();
             }
-            ActionState::SendMessage(id, SendMsgStep::Target) => {
-                self.input_mode = InputMode::Typing;
-                let target = self.buf.to_client.clone();
-                match self.verify_client(target) {
-                    Ok(_) => {
-                        self.buf.to_client.clear();
-                        self.action_state = ActionState::SendMessage(*id, SendMsgStep::Message);
-                    }
-                    Err(e) => {
-                        self.errors.push((Instant::now(), e.clone()));
-                        self.input_mode = InputMode::Selecting;
-                        self.action_state = ActionState::None;
-                        self.buf.to_client.clear();
-                    }
-                }
-            }
-            ActionState::SendMessage(id, SendMsgStep::Message) => {
+            ActionState::SendMessage => {
                 let msg = self.buf.msg_to_client.trim().to_string();
                 if !msg.is_empty() {
-                    let _ =
-                        net_handle
-                            .cmd_tx
-                            .try_send(crate::network::NetworkCommand::SendMessage {
-                                client_id: *id,
-                                msg,
-                            });
+                    
                 }
-                self.input_mode = InputMode::Selecting;
-                self.buf.msg_to_client.clear();
-                self.action_state = ActionState::None;
             }
             _ => {}
         }

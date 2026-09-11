@@ -1,5 +1,5 @@
-use crate::ui::app;
-use crate::ui::app::{ActionState, ActionState::SendMessage, App, SendMsgStep};
+use crate::ui::app::{ActionState, ActionState::SendMessage, App};
+use crate::ui::{DashBoardView, app};
 
 use ratatui::{
     Frame,
@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-pub fn draw_dashboard(frame: &mut Frame, app: &App) {
+pub fn draw_dashboard(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let outer = Layout::default()
@@ -28,8 +28,8 @@ pub fn draw_dashboard(frame: &mut Frame, app: &App) {
         ])
         .split(outer[0]);
 
-    draw_client_sidebar(frame, chunks[0], &app);
-    draw_main_pane(frame, chunks[1], &app);
+    draw_client_sidebar(frame, chunks[0], app);
+    draw_main_pane(frame, chunks[1], app);
 
     let help_info =
         Paragraph::new("Use ↑↓←→ to navigate,  press 'Enter' to select, press 'q' to quit")
@@ -37,14 +37,11 @@ pub fn draw_dashboard(frame: &mut Frame, app: &App) {
     frame.render_widget(help_info, outer[1]);
 }
 
-fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
+fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
     let block_left = Block::default().title(" WIRE CHAT ").borders(Borders::ALL);
 
     match app.input_mode {
         app::InputMode::Typing => match &app.action_state {
-            SendMessage(n, _s) => {
-                draw_client_info(frame, canvas, app, *n);
-            }
             ActionState::None => {
                 let content = format!("New client name:\n\n{}_", app.buf.new_client_name);
                 let info = Paragraph::new(content).block(block_left);
@@ -66,7 +63,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &App) {
     };
 }
 
-fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
+fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -99,8 +96,8 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
     let info_block = Paragraph::new(info).block(upper_block);
     frame.render_widget(info_block, chunks[0]);
 
-    match &app.action_state {
-        ActionState::None => {
+    match &app.dashboard_view {
+        app::DashBoardView::ClientView(_, app::CurrentWindow::ActionList) => {
             let lower_block = Block::default().title(" Actions ").borders(Borders::ALL);
 
             let actions = vec![
@@ -129,25 +126,23 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
             let actions_list = List::new(action_list).block(lower_block);
             frame.render_widget(actions_list, chunks[1]);
         }
-        ActionState::SendMessage(_id, _step) => {
-            let lower_block = Block::default()
-                .title(" Send Message ")
-                .borders(Borders::ALL);
-
+        app::DashBoardView::ClientView(_, app::CurrentWindow::Inbox) => {
             let inbox_chunk = Layout::default()
                 .direction(Direction::Horizontal)
                 .margin(1)
                 .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
                 .split(chunks[1]);
 
-            let all_clients_list: Vec<ListItem> = app
-                .clients
+            let mut clients_clone = app.clients.clone();
+            clients_clone.retain(|cli| Some(cli.id) != app.current_clients.0);
+            let all_clients_list: Vec<ListItem> = clients_clone
                 .iter()
                 .enumerate()
                 .map(|(i, cli)| {
                     let style = match app.selected.inbox_cli_selected {
                         Some(n) => {
                             if i == n {
+                                app.current_clients.1 = Some(cli.id);
                                 Style::default().add_modifier(Modifier::REVERSED)
                             } else {
                                 Style::default()
@@ -163,13 +158,46 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &App, id: usize) {
 
             frame.render_widget(list, inbox_chunk[0]);
 
-            frame.render_widget(lower_block, inbox_chunk[1]);
+            let outer = Block::default()
+                .title(" Send Message ")
+                .borders(Borders::ALL);
+
+            let inner_area = outer.inner(inbox_chunk[1]); // area inside the outer border
+            frame.render_widget(outer, inbox_chunk[1]); // draw outer box first
+
+            let [messages_area, input_area] =
+                Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
+                    .areas(inner_area);
+            let messages_list_widget = Paragraph::new("something");
+
+            // messages: no border, just content, sits flush inside outer box
+            frame.render_widget(messages_list_widget, messages_area);
+
+            // input: bordered on top only → reads as a "divider line" not a second box
+            let style = if app.selected.inbox_selected {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+
+            let input_block = Block::default()
+                .borders(Borders::TOP) // just a line, not a full nested box
+                .style(style);
+
+            if matches!(app.input_mode, app::InputMode::Typing) {
+                let content = format!("{}_", app.buf.msg_to_client);
+                let info = Paragraph::new(content).block(input_block);
+                frame.render_widget(info, input_area);
+            } else {
+                let placeholder = Paragraph::new("Press Enter to type a message");
+                frame.render_widget(placeholder.block(input_block), input_area);
+            }
         }
         _ => {}
     }
 }
 
-fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &App) {
+fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
     let block_right = Block::default()
         .title(" ALL CLIENTS ")
         .borders(Borders::ALL);

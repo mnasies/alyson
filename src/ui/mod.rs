@@ -13,6 +13,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc::Receiver;
 
+use crate::{MIN_HEIGHT, MIN_WIDTH};
+
 pub async fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     net_handle: NetworkHandle,
@@ -27,7 +29,19 @@ pub async fn run(
             .retain(|(t, _)| t.elapsed() < Duration::from_secs(5));
 
         terminal.draw(|frame| {
-            ui(frame, &main_app);
+            let area = frame.area();
+            if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+                let msg = format!(
+                    "Terminal too small ({}x{}). Please resize to at least {}x{}.",
+                    area.width, area.height, MIN_WIDTH, MIN_HEIGHT
+                );
+                let warning = ratatui::widgets::Paragraph::new(msg)
+                    .alignment(ratatui::layout::Alignment::Center)
+                    .wrap(ratatui::widgets::Wrap { trim: true });
+                frame.render_widget(warning, area);
+                return; // skip rendering the real UI this frame
+            }
+            ui(frame, &mut main_app);
             draw_error_toast(frame, &main_app);
         })?;
 
@@ -151,6 +165,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     if let Some(client) = main_app.clients.get(n) {
                         main_app.dashboard_view =
                             DashBoardView::ClientView(client.id, app::CurrentWindow::ActionList);
+                        main_app.current_clients.0 = Some(client.id);
                     }
                 }
                 _ => {}
@@ -256,8 +271,6 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     if let DashBoardView::ClientView(id, app::CurrentWindow::ActionList) =
                         main_app.dashboard_view
                     {
-                        main_app.action_state =
-                            app::ActionState::SendMessage(id, app::SendMsgStep::Target);
                         main_app.selected.action_selected = None;
                         main_app.selected.inbox_cli_selected = Some(0);
                         main_app.focus = app::Focus::InboxCli;
@@ -295,7 +308,24 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.selected.client_selected = Some(0);
                 main_app.selected.inbox_cli_selected = None;
             }
-            KeyCode::Enter => {}
+            KeyCode::Right | KeyCode::Enter => {
+                main_app.focus = app::Focus::InboxWindow;
+                main_app.selected.action_selected = None;
+                main_app.selected.inbox_cli_selected = None;
+                main_app.selected.inbox_selected = true;
+            }
+            _ => {}
+        },
+        app::Focus::InboxWindow => match key.code {
+            KeyCode::Esc | KeyCode::Left => {
+                main_app.focus = app::Focus::InboxCli;
+                main_app.selected.inbox_selected = false;
+                main_app.selected.inbox_cli_selected = Some(0);
+            }
+            KeyCode::Enter => {
+                main_app.action_state = app::ActionState::SendMessage;
+                main_app.input_mode = app::InputMode::Typing;
+            }
             _ => {}
         },
         app::Focus::None => {}

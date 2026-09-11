@@ -4,6 +4,9 @@ pub mod ui;
 
 use std::sync::Arc;
 
+pub const MIN_WIDTH: u16 = 80;
+pub const MIN_HEIGHT: u16 = 20;
+
 #[derive(Debug, Clone)]
 pub enum WireError {
     Io(Arc<std::io::Error>),
