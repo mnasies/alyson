@@ -16,6 +16,8 @@ pub enum WireError {
     Disconnected,
     PortNotAvailable,
     ClientRegistrationTimeout,
+    SerializationFailed,
+    PayloadTooLarge,
 }
 
 impl From<std::io::Error> for WireError {
@@ -33,6 +35,8 @@ impl std::fmt::Display for WireError {
             WireError::Disconnected => write!(f, "client disconnected"),
             WireError::PortNotAvailable => write!(f, "port not available"),
             WireError::TcpConnectionFailed(e) => write!(f, "TCP connection failed: {e}"),
+            WireError::PayloadTooLarge => write!(f, "payload too large"),
+            WireError::SerializationFailed => write!(f, "serialization failed"),
             WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
         }
     }

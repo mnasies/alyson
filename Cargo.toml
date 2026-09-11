@@ -7,3 +7,5 @@ edition = "2024"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 tokio = { version = "1.53.1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
