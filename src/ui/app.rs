@@ -47,24 +47,6 @@ pub enum ActionState {
     None,
 }
 
-// #[derive(Clone)]
-// pub enum SendMsgStep {
-//     Target,
-//     Message,
-// }
-
-// #[derive(Clone)]
-// pub enum JoinRoomStep {
-//     Target,
-//     Message,
-// }
-
-// #[derive(Clone)]
-// pub enum CreateRoomStep {
-//     Target,
-//     Message,
-// }
-
 pub enum Focus {
     Main,
     ClientList,
@@ -206,8 +188,9 @@ impl App {
                         self.errors.push((std::time::Instant::now(), e));
                     }
                     self.messages_scroll = 0;
-                    self.input_mode = InputMode::Selecting;
                 }
+                self.input_mode = InputMode::Selecting;
+                self.buf.msg_to_client.clear();
             }
             _ => {}
         }
