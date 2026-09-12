@@ -160,6 +160,7 @@ pub async fn run_network_engine(
     Ok(())
 }
 
+// Server Side Handling
 async fn handle_incoming_connection(
     stream: TcpStream,
     clients: Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
@@ -313,6 +314,7 @@ async fn handle_incoming_connection(
     Ok(())
 }
 
+// Client Side Handling
 async fn spawn_client_task(
     username: String,
     server_port: u16,
