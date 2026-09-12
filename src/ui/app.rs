@@ -3,6 +3,7 @@ use crate::client::InboxEntry;
 use crate::network::NetworkHandle;
 use std::time::Instant;
 
+#[derive(Clone)]
 pub struct ClientSummary {
     pub id: usize,
     pub name: String,
@@ -29,36 +30,48 @@ pub enum InputMode {
 
 pub enum DashBoardView {
     Idle,
-    ClientView(usize),
+    ClientView(usize, CurrentWindow),
 }
 
+pub enum CurrentWindow {
+    None,
+    ActionList,
+    Inbox,
+}
+
+#[derive(Clone)]
 pub enum ActionState {
-    SendMessage(usize, SendMsgStep),
-    JoinChatRoom(usize, JoinRoomStep),
-    CreateChatRoom(usize, CreateRoomStep),
+    SendMessage,
+    JoinChatRoom,
+    CreateChatRoom,
     None,
 }
 
-pub enum SendMsgStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum SendMsgStep {
+//     Target,
+//     Message,
+// }
 
-pub enum JoinRoomStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum JoinRoomStep {
+//     Target,
+//     Message,
+// }
 
-pub enum CreateRoomStep {
-    Target,
-    Message,
-}
+// #[derive(Clone)]
+// pub enum CreateRoomStep {
+//     Target,
+//     Message,
+// }
 
 pub enum Focus {
     Main,
     ClientList,
     ClientOption,
     ActionList,
+    InboxCli,
+    InboxWindow,
     None,
 }
 
@@ -78,52 +91,85 @@ impl AppBuf {
     }
 }
 
-pub struct App {
-    pub screen: Screen,
-    pub option_selected: usize,
-    pub input_mode: InputMode,
-    pub dashboard_view: DashBoardView,
-    pub clients: Vec<ClientSummary>,
+pub struct Selection {
     pub client_selected: Option<usize>,
     pub cli_opt_selected: Option<usize>,
     pub action_selected: Option<usize>,
+    pub inbox_cli_selected: Option<usize>,
+    pub inbox_selected: bool,
+    pub option_selected: usize,
+}
+
+impl Selection {
+    pub fn new() -> Self {
+        Selection {
+            client_selected: None,
+            cli_opt_selected: None,
+            action_selected: None,
+            inbox_cli_selected: None,
+            inbox_selected: false,
+            option_selected: 0,
+        }
+    }
+}
+
+pub struct App {
+    pub screen: Screen,
+    pub selected: Selection,
+    pub input_mode: InputMode,
+    pub dashboard_view: DashBoardView,
+    pub clients: Vec<ClientSummary>,
     pub action_state: ActionState,
     pub buf: AppBuf,
     pub focus: Focus,
     pub errors: Vec<(Instant, WireError)>,
     pub inboxes: Vec<InboxEntry>,
+    pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
+    pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
 }
 
 impl App {
     pub fn new() -> Self {
         App {
             screen: Screen::Home,
-            option_selected: 0,
+            selected: Selection::new(),
             input_mode: InputMode::Selecting,
             dashboard_view: DashBoardView::Idle,
             clients: Vec::new(),
-            client_selected: Some(0),
-            cli_opt_selected: None,
-            action_selected: None,
             action_state: ActionState::None,
             buf: AppBuf::new(),
             focus: Focus::None,
             errors: Vec::new(),
             inboxes: Vec::new(),
+            current_clients: (None, None),
+            messages_scroll: 0,
         }
     }
 
     pub fn current_input_mut(&mut self) -> Option<&mut String> {
         match self.action_state {
             ActionState::None => Some(&mut self.buf.new_client_name),
-            ActionState::SendMessage(_, SendMsgStep::Target) => Some(&mut self.buf.to_client),
-            ActionState::SendMessage(_, SendMsgStep::Message) => Some(&mut self.buf.msg_to_client),
+            ActionState::SendMessage => Some(&mut self.buf.msg_to_client),
             _ => None,
         }
     }
 
+    pub fn verify_client(&mut self, name: String) -> Result<usize, WireError> {
+        if name.is_empty() {
+            return Err(WireError::InvalidName);
+        } else {
+            for client in self.clients.iter() {
+                if name == client.name {
+                    return Ok(client.id);
+                }
+            }
+        }
+        Err(WireError::InvalidName)
+    }
+
     pub fn advance_action(&mut self, net_handle: &NetworkHandle) -> Result<(), WireError> {
-        match &self.action_state {
+        let action_state = self.action_state.clone();
+        match &action_state {
             ActionState::None => {
                 let name = self.buf.new_client_name.trim().to_string();
                 self.input_mode = InputMode::Selecting;
@@ -133,25 +179,35 @@ impl App {
                 }
                 self.buf.new_client_name.clear();
             }
-            ActionState::SendMessage(id, SendMsgStep::Target) => {
-                self.input_mode = InputMode::Typing;
-                self.buf.to_client.clear();
-                self.action_state = ActionState::SendMessage(*id, SendMsgStep::Message);
-            }
-            ActionState::SendMessage(id, SendMsgStep::Message) => {
+            ActionState::SendMessage => {
                 let msg = self.buf.msg_to_client.trim().to_string();
                 if !msg.is_empty() {
-                    let _ =
-                        net_handle
-                            .cmd_tx
-                            .try_send(crate::network::NetworkCommand::SendMessage {
-                                client_id: *id,
-                                msg,
-                            });
+                    let sender = match self.current_clients.0 {
+                        Some(id) => id,
+                        None => {
+                            self.input_mode = InputMode::Selecting;
+                            self.errors
+                                .push((std::time::Instant::now(), WireError::SenderNotFound));
+                            return Ok(());
+                        }
+                    };
+                    let receiver = match self.current_clients.1 {
+                        Some(id) => id,
+                        None => {
+                            self.errors
+                                .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                            self.input_mode = InputMode::Selecting;
+                            return Ok(());
+                        }
+                    };
+                    let entry =
+                        InboxEntry::new(std::time::SystemTime::now(), msg, sender, receiver, true);
+                    if let Err(e) = net_handle.send_message(entry) {
+                        self.errors.push((std::time::Instant::now(), e));
+                    }
+                    self.messages_scroll = 0;
+                    self.input_mode = InputMode::Selecting;
                 }
-                self.input_mode = InputMode::Selecting;
-                self.buf.msg_to_client.clear();
-                self.action_state = ActionState::None;
             }
             _ => {}
         }

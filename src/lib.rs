@@ -2,20 +2,30 @@ pub mod client;
 pub mod network;
 pub mod ui;
 
-#[derive(Debug)]
+use std::sync::Arc;
+
+pub const MIN_WIDTH: u16 = 80;
+pub const MIN_HEIGHT: u16 = 20;
+
+#[derive(Debug, Clone)]
 pub enum WireError {
-    Io(std::io::Error),
+    Io(Arc<std::io::Error>),
     InvalidName,
     HandshakeFailed(String),
-    TcpConnectionFailed(std::io::Error),
+    TcpConnectionFailed(Arc<std::io::Error>),
     Disconnected,
     PortNotAvailable,
     ClientRegistrationTimeout,
+    SerializationFailed,
+    PayloadTooLarge,
+    ChannelNotFound,
+    SenderNotFound,
+    ReceiverNotFound,
 }
 
 impl From<std::io::Error> for WireError {
     fn from(e: std::io::Error) -> Self {
-        WireError::Io(e)
+        WireError::Io(Arc::new(e))
     }
 }
 
@@ -28,7 +38,12 @@ impl std::fmt::Display for WireError {
             WireError::Disconnected => write!(f, "client disconnected"),
             WireError::PortNotAvailable => write!(f, "port not available"),
             WireError::TcpConnectionFailed(e) => write!(f, "TCP connection failed: {e}"),
+            WireError::ChannelNotFound => write!(f, "channel not found"),
+            WireError::PayloadTooLarge => write!(f, "payload too large"),
+            WireError::SerializationFailed => write!(f, "serialization failed"),
             WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
+            WireError::SenderNotFound => write!(f, "sender not found"),
+            WireError::ReceiverNotFound => write!(f, "receiver not found"),
         }
     }
 }

@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-pub fn ui(frame: &mut Frame, app: &App) {
+pub fn ui(frame: &mut Frame, app: &mut App) {
     match app.screen {
         Screen::Home => draw_homepage(frame, app),
         Screen::Dashboard => draw_dashboard(frame, app),
@@ -37,7 +37,7 @@ fn draw_homepage(frame: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, opt)| {
-            let style = if i == app.option_selected {
+            let style = if i == app.selected.option_selected {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
                 Style::default()

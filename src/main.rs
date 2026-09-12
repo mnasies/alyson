@@ -1,3 +1,6 @@
+use alyson::WireError;
+use alyson::network::{NetworkHandle, run_network_engine};
+use alyson::ui::run;
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -5,13 +8,13 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use tokio::sync::mpsc;
-use alyson::WireError;
-use alyson::network::{NetworkHandle, run_network_engine};
-use alyson::ui::run;
 
 fn reset_terminal() {
+    use std::io::Write;
     let _ = disable_raw_mode();
-    let _ = execute!(stdout(), LeaveAlternateScreen);
+    let mut stdout = stdout();
+    let _ = execute!(stdout, LeaveAlternateScreen, crossterm::cursor::Show);
+    let _ = stdout.flush();
 }
 
 #[tokio::main]
@@ -21,6 +24,8 @@ async fn main() -> Result<(), WireError> {
     std::panic::set_hook(Box::new(move |panic_info| {
         reset_terminal();
         original_hook(panic_info);
+        // Explicitly exit the process so background panics kill the UI too
+        std::process::exit(1);
     }));
 
     // --- channels setup ---
