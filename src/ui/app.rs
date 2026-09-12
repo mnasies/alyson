@@ -125,6 +125,7 @@ pub struct App {
     pub errors: Vec<(Instant, WireError)>,
     pub inboxes: Vec<InboxEntry>,
     pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
+    pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
 }
 
 impl App {
@@ -141,6 +142,7 @@ impl App {
             errors: Vec::new(),
             inboxes: Vec::new(),
             current_clients: (None, None),
+            messages_scroll: 0,
         }
     }
 
@@ -180,7 +182,31 @@ impl App {
             ActionState::SendMessage => {
                 let msg = self.buf.msg_to_client.trim().to_string();
                 if !msg.is_empty() {
-                    
+                    let sender = match self.current_clients.0 {
+                        Some(id) => id,
+                        None => {
+                            self.input_mode = InputMode::Selecting;
+                            self.errors
+                                .push((std::time::Instant::now(), WireError::SenderNotFound));
+                            return Ok(());
+                        }
+                    };
+                    let receiver = match self.current_clients.1 {
+                        Some(id) => id,
+                        None => {
+                            self.errors
+                                .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                            self.input_mode = InputMode::Selecting;
+                            return Ok(());
+                        }
+                    };
+                    let entry =
+                        InboxEntry::new(std::time::SystemTime::now(), msg, sender, receiver, true);
+                    if let Err(e) = net_handle.send_message(entry) {
+                        self.errors.push((std::time::Instant::now(), e));
+                    }
+                    self.messages_scroll = 0;
+                    self.input_mode = InputMode::Selecting;
                 }
             }
             _ => {}

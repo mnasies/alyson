@@ -326,6 +326,12 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.action_state = app::ActionState::SendMessage;
                 main_app.input_mode = app::InputMode::Typing;
             }
+            KeyCode::PageUp => {
+                main_app.messages_scroll = main_app.messages_scroll.saturating_add(5); // scroll up 5 lines
+            }
+            KeyCode::PageDown => {
+                main_app.messages_scroll = main_app.messages_scroll.saturating_sub(5); // scroll down 5 lines
+            }
             _ => {}
         },
         app::Focus::None => {}

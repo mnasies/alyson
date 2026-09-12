@@ -1,11 +1,12 @@
+use crate::client::InboxEntry;
 use crate::ui::app;
 use crate::ui::app::{ActionState, App};
 
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
-    text::Line,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
@@ -173,9 +174,55 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
             let [messages_area, input_area] =
                 Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
                     .areas(inner_area);
-            let messages_list_widget = Paragraph::new("something");
 
-            // messages: no border, just content, sits flush inside outer box
+            let (Some(sender_id), Some(receiver_id)) = app.current_clients else {
+                let placeholder = Paragraph::new("Select a client to start chatting");
+                frame.render_widget(placeholder, messages_area);
+                return;
+            };
+
+            let mut convo: Vec<&InboxEntry> = app
+                .inboxes
+                .iter()
+                .filter(|e| {
+                    (e.from == sender_id && e.to == receiver_id)
+                        || (e.from == receiver_id && e.to == sender_id)
+                })
+                .collect();
+            convo.sort_by_key(|e| e.time);
+
+            let max_bubble_width = (messages_area.width as usize).saturating_sub(6).min(40);
+
+            let mut all_lines: Vec<Line> = Vec::new();
+            for entry in &convo {
+                let is_outgoing = entry.from == sender_id;
+                let color = if is_outgoing {
+                    Color::Cyan
+                } else {
+                    Color::Green
+                };
+                all_lines.extend(build_bubble(
+                    &entry.msg,
+                    max_bubble_width,
+                    color,
+                    is_outgoing,
+                ));
+            }
+
+            let area_height = messages_area.height as usize;
+            let total = all_lines.len();
+
+            // Clamp scroll so you can't scroll past the top.
+            let max_scroll = total.saturating_sub(area_height);
+            app.messages_scroll = app.messages_scroll.min(max_scroll);
+
+            // end_idx moves up as messages_scroll increases; start_idx follows area_height behind it.
+            let end_idx = total.saturating_sub(app.messages_scroll);
+            let start_idx = end_idx.saturating_sub(area_height);
+
+            let visible_lines = all_lines[start_idx..end_idx].to_vec();
+
+            let messages_list_widget = Paragraph::new(visible_lines);
             frame.render_widget(messages_list_widget, messages_area);
 
             // input: bordered on top only → reads as a "divider line" not a second box
@@ -256,4 +303,51 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .collect();
     let list = List::new(cli_opt_list).block(Block::default().borders(Borders::ALL));
     frame.render_widget(list, chunks[1]);
+}
+
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current.clone());
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn build_bubble(msg: &str, max_width: usize, color: Color, right: bool) -> Vec<Line<'static>> {
+    let wrapped = wrap_text(msg, max_width);
+    let content_width = wrapped.iter().map(|l| l.len()).max().unwrap_or(0);
+
+    let top = format!("┌{}┐", "─".repeat(content_width + 2));
+    let bottom = format!("└{}┘", "─".repeat(content_width + 2));
+
+    let mut bubble = vec![Line::from(Span::styled(top, Style::default().fg(color)))];
+    for l in &wrapped {
+        let padded = format!("│ {:<width$} │", l, width = content_width);
+        bubble.push(Line::from(Span::styled(padded, Style::default().fg(color))));
+    }
+    bubble.push(Line::from(Span::styled(bottom, Style::default().fg(color))));
+
+    for line in &mut bubble {
+        *line = if right {
+            line.clone().right_aligned()
+        } else {
+            line.clone().left_aligned()
+        };
+    }
+    bubble
 }

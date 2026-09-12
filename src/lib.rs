@@ -19,6 +19,8 @@ pub enum WireError {
     SerializationFailed,
     PayloadTooLarge,
     ChannelNotFound,
+    SenderNotFound,
+    ReceiverNotFound,
 }
 
 impl From<std::io::Error> for WireError {
@@ -40,6 +42,8 @@ impl std::fmt::Display for WireError {
             WireError::PayloadTooLarge => write!(f, "payload too large"),
             WireError::SerializationFailed => write!(f, "serialization failed"),
             WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
+            WireError::SenderNotFound => write!(f, "sender not found"),
+            WireError::ReceiverNotFound => write!(f, "receiver not found"),
         }
     }
 }
