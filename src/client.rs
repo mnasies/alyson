@@ -32,22 +32,20 @@ impl std::fmt::Display for InboxEntry {
 pub struct Client {
     pub id: usize,
     pub username: String,
-    pub cmd_tx: tokio::sync::mpsc::Sender<InboxEntry>,
+    pub cmd_tx: Option<tokio::sync::mpsc::Sender<InboxEntry>>,
     pub writer: tokio::sync::mpsc::Sender<InboxEntry>,
     pub ip: String,
     pub port: u16,
-    pub read_side: bool,
 }
 
 impl Client {
     pub fn new(
         id: usize,
         username: String,
-        cmd_tx: tokio::sync::mpsc::Sender<InboxEntry>,
+        cmd_tx: Option<tokio::sync::mpsc::Sender<InboxEntry>>,
         writer: tokio::sync::mpsc::Sender<InboxEntry>,
         ip: String,
         port: u16,
-        read_side: bool,
     ) -> Self {
         Self {
             id,
@@ -56,7 +54,6 @@ impl Client {
             writer,
             ip,
             port,
-            read_side,
         }
     }
 }

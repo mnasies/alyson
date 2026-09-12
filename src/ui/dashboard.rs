@@ -1,5 +1,5 @@
-use crate::ui::app::{ActionState, ActionState::SendMessage, App};
-use crate::ui::{DashBoardView, app};
+use crate::ui::app;
+use crate::ui::app::{ActionState, App};
 
 use ratatui::{
     Frame,
@@ -46,6 +46,11 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let content = format!("New client name:\n\n{}_", app.buf.new_client_name);
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
+            }
+            ActionState::SendMessage => {
+                if let app::DashBoardView::ClientView(id, _) = &app.dashboard_view {
+                    draw_client_info(frame, canvas, app, *id);
+                }
             }
             _ => {}
         },
