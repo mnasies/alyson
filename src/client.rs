@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -54,6 +55,23 @@ impl Client {
             writer,
             ip,
             port,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Room {
+    pub id: usize,
+    pub username: String,
+    pub members: HashSet<usize>,
+}
+
+impl Room {
+    pub fn new(id: usize, username: String) -> Self {
+        Self {
+            id,
+            username,
+            members: HashSet::new(),
         }
     }
 }

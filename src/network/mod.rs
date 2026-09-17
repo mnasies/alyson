@@ -7,7 +7,7 @@ use server_side::handle_incoming_connection;
 pub mod framing;
 
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
+use crate::client::{Client, InboxEntry, Room};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[derive(Debug)]
 pub enum NetworkCommand {
     SpawnClient { username: String },
+    CreateRoom { username: String },
     SendMessage { data: InboxEntry },
 }
 
@@ -32,6 +33,9 @@ pub enum NetworkEvent {
     },
     ClientDisconnected {
         id: usize,
+    },
+    RoomCreated {
+        room: Room,
     },
     MessageReceived(InboxEntry),
     ErrorOccurred(WireError),
@@ -58,11 +62,19 @@ impl NetworkHandle {
             .try_send(NetworkCommand::SendMessage { data })
             .map_err(|_| WireError::PortNotAvailable)
     }
+
+    pub fn create_room(&self, name: String) -> Result<(), WireError> {
+        self.cmd_tx
+            .try_send(NetworkCommand::CreateRoom { username: name })
+            .map_err(|_| WireError::PortNotAvailable)
+    }
 }
 
 pub struct NetworkState {
     pub clients: Arc<Mutex<HashMap<usize, Client>>>,
+    pub rooms: Arc<Mutex<HashMap<usize, Room>>>,
     pub next_id: Arc<atomic::AtomicUsize>,
+    pub next_room_id: Arc<atomic::AtomicUsize>,
     pub event_tx: Sender<NetworkEvent>,
 }
 
@@ -70,7 +82,9 @@ impl NetworkState {
     pub async fn new(event_tx: Sender<NetworkEvent>) -> Self {
         NetworkState {
             clients: Arc::new(Mutex::new(HashMap::new())),
+            rooms: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(atomic::AtomicUsize::new(0)),
+            next_room_id: Arc::new(atomic::AtomicUsize::new(0)),
             event_tx,
         }
     }
@@ -88,6 +102,10 @@ impl NetworkState {
 
     pub fn next_id(&self) -> usize {
         self.next_id.fetch_add(1, atomic::Ordering::SeqCst)
+    }
+
+    pub fn next_room_id(&self) -> usize {
+        self.next_room_id.fetch_add(1, atomic::Ordering::SeqCst)
     }
 }
 
@@ -177,6 +195,14 @@ pub async fn run_network_engine(
                         }
                     }
                 }
+            }
+            NetworkCommand::CreateRoom { username } => {
+                let room_id = net_state.next_room_id();
+                let room = Room::new(room_id, username.clone());
+                let _ = net_state.rooms.lock().await.insert(room_id, room.clone());
+                let _ = event_tx_clone
+                    .send(NetworkEvent::RoomCreated { room })
+                    .await;
             }
         }
     }

@@ -48,6 +48,11 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
             }
+            ActionState::CreateChatRoom => {
+                let content = format!("New room name:\n\n{}_", app.buf.new_room_name);
+                let info = Paragraph::new(content).block(block_left);
+                frame.render_widget(info, canvas);
+            }
             ActionState::SendMessage => {
                 if let app::DashBoardView::ClientView(id, _) = &app.dashboard_view {
                     draw_client_info(frame, canvas, app, *id);
@@ -134,6 +139,9 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
         }
         app::DashBoardView::ClientView(_, app::CurrentWindow::Inbox) => {
             draw_inbox_window(frame, chunks[1], app);
+        }
+        app::DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+            draw_room_window(frame, chunks[1], app);
         }
         _ => {}
     }
@@ -251,6 +259,39 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         let placeholder = Paragraph::new("Press Enter to type a message");
         frame.render_widget(placeholder.block(input_block), input_area);
     }
+}
+
+fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
+    let room_chunk = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(canvas);
+
+    let rooms_clone = app.rooms.clone();
+    let all_rooms_list: Vec<ListItem> = rooms_clone
+        .iter()
+        .enumerate()
+        .map(|(i, room)| {
+            let style = match app.selected.room_list_selected {
+                Some(n) => {
+                    if i == n {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
+            };
+            let line = Line::from(room.username.clone()).alignment(Alignment::Left);
+            ListItem::new(line).style(style)
+        })
+        .collect();
+    let list = List::new(all_rooms_list).block(Block::default().borders(Borders::all()));
+
+    frame.render_widget(list, room_chunk[0]);
+    let par = Paragraph::new("random");
+    frame.render_widget(par, room_chunk[1]);
 }
 
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {

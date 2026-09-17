@@ -1,5 +1,5 @@
 use crate::WireError;
-use crate::client::InboxEntry;
+use crate::client::{InboxEntry, Room};
 use crate::network::NetworkHandle;
 use std::time::Instant;
 
@@ -37,6 +37,7 @@ pub enum CurrentWindow {
     None,
     ActionList,
     Inbox,
+    Room,
 }
 
 #[derive(Clone)]
@@ -54,6 +55,7 @@ pub enum Focus {
     ActionList,
     InboxCli,
     InboxWindow,
+    RoomInterface,
     None,
 }
 
@@ -61,6 +63,7 @@ pub struct AppBuf {
     pub new_client_name: String,
     pub to_client: String,
     pub msg_to_client: String,
+    pub new_room_name: String,
 }
 
 impl AppBuf {
@@ -69,6 +72,7 @@ impl AppBuf {
             new_client_name: String::new(),
             to_client: String::new(),
             msg_to_client: String::new(),
+            new_room_name: String::new(),
         }
     }
 }
@@ -78,6 +82,7 @@ pub struct Selection {
     pub cli_opt_selected: Option<usize>,
     pub action_selected: Option<usize>,
     pub inbox_cli_selected: Option<usize>,
+    pub room_list_selected: Option<usize>,
     pub inbox_selected: bool,
     pub option_selected: usize,
 }
@@ -89,6 +94,7 @@ impl Selection {
             cli_opt_selected: None,
             action_selected: None,
             inbox_cli_selected: None,
+            room_list_selected: None,
             inbox_selected: false,
             option_selected: 0,
         }
@@ -108,6 +114,7 @@ pub struct App {
     pub inboxes: Vec<InboxEntry>,
     pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
     pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
+    pub rooms: Vec<Room>,
 }
 
 impl App {
@@ -125,6 +132,7 @@ impl App {
             inboxes: Vec::new(),
             current_clients: (None, None),
             messages_scroll: 0,
+            rooms: Vec::new(),
         }
     }
 
@@ -132,6 +140,7 @@ impl App {
         match self.action_state {
             ActionState::None => Some(&mut self.buf.new_client_name),
             ActionState::SendMessage => Some(&mut self.buf.msg_to_client),
+            ActionState::CreateChatRoom => Some(&mut self.buf.new_room_name),
             _ => None,
         }
     }
@@ -158,6 +167,15 @@ impl App {
                 if !name.is_empty() {
                     // actually create the client — network call, next
                     net_handle.spawn_client(name)?;
+                }
+                self.buf.new_client_name.clear();
+            }
+            ActionState::CreateChatRoom => {
+                let name = self.buf.new_room_name.trim().to_string();
+                self.input_mode = InputMode::Selecting;
+                if !name.is_empty() {
+                    // actually create the client — network call, next
+                    net_handle.create_room(name)?;
                 }
                 self.buf.new_client_name.clear();
             }

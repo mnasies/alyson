@@ -126,6 +126,9 @@ pub async fn run(
                 NetworkEvent::ErrorOccurred(err) => {
                     main_app.errors.push((Instant::now(), err));
                 }
+                NetworkEvent::RoomCreated { room } => {
+                    main_app.rooms.push(room);
+                }
             }
         }
     }
@@ -216,12 +219,18 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     main_app.selected.cli_opt_selected = Some(cli_opt + 1);
                 }
             }
-            KeyCode::Enter => {
-                if let Some(0) = main_app.selected.cli_opt_selected {
+            KeyCode::Enter => match main_app.selected.cli_opt_selected {
+                Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.buf.new_client_name.clear();
                 }
-            }
+                Some(1) => {
+                    main_app.input_mode = app::InputMode::Typing;
+                    main_app.buf.new_room_name.clear();
+                    main_app.action_state = app::ActionState::CreateChatRoom;
+                }
+                _ => {}
+            },
             KeyCode::Right => {
                 match main_app.dashboard_view {
                     DashBoardView::ClientView(_, app::CurrentWindow::ActionList) => {
@@ -278,6 +287,17 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                             DashBoardView::ClientView(id, app::CurrentWindow::Inbox);
                     }
                 }
+                Some(1) => {
+                    if let DashBoardView::ClientView(id, app::CurrentWindow::ActionList) =
+                        main_app.dashboard_view
+                    {
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(id, app::CurrentWindow::Room);
+                    }
+                }
                 _ => {}
             },
             _ => {}
@@ -314,6 +334,21 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.selected.inbox_cli_selected = None;
                 main_app.selected.inbox_selected = true;
             }
+            KeyCode::Esc => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.selected.action_selected = Some(0);
+                match main_app.current_clients.0 {
+                    Some(n) => {
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(n, app::CurrentWindow::ActionList);
+                    }
+                    None => {
+                        main_app
+                            .errors
+                            .push((Instant::now(), WireError::ClientNotFound));
+                    }
+                }
+            }
             _ => {}
         },
         app::Focus::InboxWindow => match key.code {
@@ -331,6 +366,55 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
             }
             KeyCode::PageDown => {
                 main_app.messages_scroll = main_app.messages_scroll.saturating_sub(5); // scroll down 5 lines
+            }
+            _ => {}
+        },
+        app::Focus::RoomInterface => match key.code {
+            KeyCode::Up => {
+                let cli = match main_app.selected.inbox_cli_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if cli > 0 {
+                    main_app.selected.inbox_cli_selected = Some(cli - 1);
+                }
+            }
+            KeyCode::Down => {
+                let cli = match main_app.selected.inbox_cli_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                let last_index = main_app.clients.len().saturating_sub(1);
+                if cli < last_index {
+                    main_app.selected.inbox_cli_selected = Some(cli + 1);
+                }
+            }
+            KeyCode::Left => {
+                main_app.focus = app::Focus::ClientList;
+                main_app.selected.action_selected = None;
+                main_app.selected.client_selected = Some(0);
+                main_app.selected.inbox_cli_selected = None;
+            }
+            KeyCode::Right | KeyCode::Enter => {
+                main_app.focus = app::Focus::InboxWindow;
+                main_app.selected.action_selected = None;
+                main_app.selected.inbox_cli_selected = None;
+                main_app.selected.inbox_selected = true;
+            }
+            KeyCode::Esc => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.selected.action_selected = Some(0);
+                match main_app.current_clients.0 {
+                    Some(n) => {
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(n, app::CurrentWindow::ActionList);
+                    }
+                    None => {
+                        main_app
+                            .errors
+                            .push((Instant::now(), WireError::ClientNotFound));
+                    }
+                }
             }
             _ => {}
         },
