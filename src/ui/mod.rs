@@ -185,6 +185,11 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                         main_app.selected.action_selected = None;
                         main_app.selected.inbox_cli_selected = Some(0);
                     }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
+                    }
                     _ => {}
                 }
                 main_app.selected.cli_opt_selected = None;
@@ -242,6 +247,11 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                         main_app.focus = app::Focus::InboxCli;
                         main_app.selected.action_selected = None;
                         main_app.selected.inbox_cli_selected = Some(0);
+                    }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
                     }
                     _ => {}
                 }
@@ -371,34 +381,34 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
         },
         app::Focus::RoomInterface => match key.code {
             KeyCode::Up => {
-                let cli = match main_app.selected.inbox_cli_selected {
+                let cli = match main_app.selected.room_list_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 if cli > 0 {
-                    main_app.selected.inbox_cli_selected = Some(cli - 1);
+                    main_app.selected.room_list_selected = Some(cli - 1);
                 }
             }
             KeyCode::Down => {
-                let cli = match main_app.selected.inbox_cli_selected {
+                let cli = match main_app.selected.room_list_selected {
                     Some(n) => n,
                     None => 0,
                 };
                 let last_index = main_app.clients.len().saturating_sub(1);
                 if cli < last_index {
-                    main_app.selected.inbox_cli_selected = Some(cli + 1);
+                    main_app.selected.room_list_selected = Some(cli + 1);
                 }
             }
             KeyCode::Left => {
                 main_app.focus = app::Focus::ClientList;
                 main_app.selected.action_selected = None;
                 main_app.selected.client_selected = Some(0);
-                main_app.selected.inbox_cli_selected = None;
+                main_app.selected.room_list_selected = None;
             }
             KeyCode::Right | KeyCode::Enter => {
                 main_app.focus = app::Focus::InboxWindow;
                 main_app.selected.action_selected = None;
-                main_app.selected.inbox_cli_selected = None;
+                main_app.selected.room_list_selected = None;
                 main_app.selected.inbox_selected = true;
             }
             KeyCode::Esc => {
