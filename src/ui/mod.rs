@@ -406,10 +406,10 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.selected.room_list_selected = None;
             }
             KeyCode::Right | KeyCode::Enter => {
-                main_app.focus = app::Focus::InboxWindow;
+                main_app.focus = app::Focus::RoomboxWindow;
                 main_app.selected.action_selected = None;
                 main_app.selected.room_list_selected = None;
-                main_app.selected.inbox_selected = true;
+                main_app.selected.roombox_selected = true;
             }
             KeyCode::Esc => {
                 main_app.focus = app::Focus::ActionList;
@@ -426,6 +426,15 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     }
                 }
             }
+            _ => {}
+        },
+        app::Focus::RoomboxWindow => match key.code {
+            KeyCode::Esc | KeyCode::Left => {
+                main_app.focus = app::Focus::RoomInterface;
+                main_app.selected.roombox_selected = false;
+                main_app.selected.room_list_selected = Some(0);
+            }
+            KeyCode::Enter => {}
             _ => {}
         },
         app::Focus::None => {}

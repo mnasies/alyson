@@ -13,6 +13,7 @@ pub async fn handle_incoming_connection(
     use tokio::io::AsyncBufReadExt;
 
     let clients = net_state.clients.clone();
+    let rooms = net_state.rooms.clone();
     let next_id = net_state.next_id.clone();
     let event_tx = net_state.event_tx.clone();
 
@@ -65,14 +66,27 @@ pub async fn handle_incoming_connection(
 
     // Server-side reader task of a Client
     let clients_reader = Arc::clone(&clients);
+    let rooms_reader = Arc::clone(&rooms);
     let event_tx_reader = event_tx.clone();
     tokio::spawn(async move {
         let clients_reader_clone = clients_reader.clone();
+        let rooms_reader_clone = rooms_reader.clone();
         let handle_entry = async move |entry: InboxEntry| {
-            // find the client and the data to server-side writer task
+            // find the client and send the data to server-side writer task
             let clients_lock = clients_reader_clone.lock().await;
-            if let Some(client) = clients_lock.get(&entry.to) {
-                let _ = client.writer.send(entry).await;
+            let rooms_lock = rooms_reader_clone.lock().await;
+            if entry.cli_or_room {
+                if let Some(client) = clients_lock.get(&entry.to) {
+                    let _ = client.writer.send(entry).await;
+                }
+            } else {
+                if let Some(room) = rooms_lock.get(&entry.to) {
+                    for cli_id in room.members.iter() {
+                        if let Some(client) = clients_lock.get(cli_id) {
+                            let _ = client.writer.send(entry.clone()).await;
+                        }
+                    }
+                }
             }
         };
         framing::read_framed_loop(reader, event_tx_reader.clone(), handle_entry).await;

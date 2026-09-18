@@ -200,8 +200,8 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .inboxes
         .iter()
         .filter(|e| {
-            (e.from == sender_id && e.to == receiver_id)
-                || (e.from == receiver_id && e.to == sender_id)
+            (e.from == sender_id && e.to == receiver_id && e.cli_or_room == true)
+                || (e.from == receiver_id && e.to == sender_id && e.cli_or_room == true)
         })
         .collect();
     convo.sort_by_key(|e| e.time);
@@ -276,6 +276,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
             let style = match app.selected.room_list_selected {
                 Some(n) => {
                     if i == n {
+                        app.current_room = Some(room.id);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -290,8 +291,45 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
     let list = List::new(all_rooms_list).block(Block::default().borders(Borders::all()));
 
     frame.render_widget(list, room_chunk[0]);
-    let par = Paragraph::new("random");
-    frame.render_widget(par, room_chunk[1]);
+    let outer = Block::default().title(" Chat Room ").borders(Borders::ALL);
+
+    let inner_area = outer.inner(room_chunk[1]); // area inside the outer border
+    frame.render_widget(outer, room_chunk[1]); // draw outer box first
+
+    let mut is_member = false;
+    if let Some(room_id) = app.current_room {
+        if let Some(room) = app.rooms.iter().find(|room| room.id == room_id) {
+            if let Some(cli_id) = app.current_clients.0 {
+                match room.members.iter().find(|id| **id == cli_id) {
+                    Some(_) => is_member = true,
+                    None => is_member = false,
+                }
+            }
+        }
+    }
+
+    let [messages_area, input_area] =
+        Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
+            .areas(inner_area);
+    let random = Paragraph::new("random");
+    frame.render_widget(random, messages_area);
+
+    let placeholder;
+    if is_member {
+        placeholder = Paragraph::new("Press Enter to type a message");
+    } else {
+        placeholder = Paragraph::new("Join Room");
+    }
+
+    let style = if app.selected.roombox_selected {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    };
+    let input_block = Block::default()
+        .borders(Borders::TOP) // just a line, not a full nested box
+        .style(style);
+    frame.render_widget(placeholder.block(input_block), input_area);
 }
 
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {

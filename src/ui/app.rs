@@ -55,6 +55,7 @@ pub enum Focus {
     ActionList,
     InboxCli,
     InboxWindow,
+    RoomboxWindow,
     RoomInterface,
     None,
 }
@@ -84,6 +85,7 @@ pub struct Selection {
     pub inbox_cli_selected: Option<usize>,
     pub room_list_selected: Option<usize>,
     pub inbox_selected: bool,
+    pub roombox_selected: bool,
     pub option_selected: usize,
 }
 
@@ -96,6 +98,7 @@ impl Selection {
             inbox_cli_selected: None,
             room_list_selected: None,
             inbox_selected: false,
+            roombox_selected: false,
             option_selected: 0,
         }
     }
@@ -113,6 +116,7 @@ pub struct App {
     pub errors: Vec<(Instant, WireError)>,
     pub inboxes: Vec<InboxEntry>,
     pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
+    pub current_room: Option<usize>,
     pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
     pub rooms: Vec<Room>,
 }
@@ -131,6 +135,7 @@ impl App {
             errors: Vec::new(),
             inboxes: Vec::new(),
             current_clients: (None, None),
+            current_room: None,
             messages_scroll: 0,
             rooms: Vec::new(),
         }
