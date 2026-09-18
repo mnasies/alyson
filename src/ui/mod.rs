@@ -119,7 +119,9 @@ pub async fn run(
                     }
                 }
                 NetworkEvent::MessageReceived(entry) => {
-                    main_app.inboxes.push(entry);
+                    if !main_app.inboxes.contains(&entry) {
+                        main_app.inboxes.push(entry);
+                    }
                 }
                 NetworkEvent::ErrorOccurred(err) => {
                     main_app.errors.push((Instant::now(), err));
@@ -441,7 +443,10 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 main_app.selected.room_list_selected = Some(0);
             }
             KeyCode::Enter => {
-                if !main_app.verify_current_room_member() {
+                if main_app.verify_current_room_member() {
+                    main_app.action_state = app::ActionState::SendMessageToRoom;
+                    main_app.input_mode = app::InputMode::Typing;
+                } else {
                     if let Some(cli_id) = main_app.current_clients.0 {
                         if let Some(room_id) = main_app.current_room {
                             let _ = net_handle.join_room(cli_id, room_id);

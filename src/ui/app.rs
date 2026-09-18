@@ -45,6 +45,7 @@ pub enum ActionState {
     SendMessage,
     JoinChatRoom,
     CreateChatRoom,
+    SendMessageToRoom,
     None,
 }
 
@@ -144,7 +145,9 @@ impl App {
     pub fn current_input_mut(&mut self) -> Option<&mut String> {
         match self.action_state {
             ActionState::None => Some(&mut self.buf.new_client_name),
-            ActionState::SendMessage => Some(&mut self.buf.msg_to_client),
+            ActionState::SendMessage | ActionState::SendMessageToRoom => {
+                Some(&mut self.buf.msg_to_client)
+            }
             ActionState::CreateChatRoom => Some(&mut self.buf.new_room_name),
             _ => None,
         }
@@ -197,7 +200,7 @@ impl App {
                 }
                 self.buf.new_room_name.clear();
             }
-            ActionState::SendMessage => {
+            ActionState::SendMessage | ActionState::SendMessageToRoom => {
                 let msg = self.buf.msg_to_client.trim().to_string();
                 if !msg.is_empty() {
                     let sender = match self.current_clients.0 {
@@ -209,17 +212,38 @@ impl App {
                             return Ok(());
                         }
                     };
-                    let receiver = match self.current_clients.1 {
-                        Some(id) => id,
-                        None => {
-                            self.errors
-                                .push((std::time::Instant::now(), WireError::ReceiverNotFound));
-                            self.input_mode = InputMode::Selecting;
-                            return Ok(());
-                        }
-                    };
-                    let entry =
-                        InboxEntry::new(std::time::SystemTime::now(), msg, sender, receiver, true);
+                    let receiver;
+                    let cli_or_room;
+                    if matches!(self.action_state, ActionState::SendMessage) {
+                        receiver = match self.current_clients.1 {
+                            Some(id) => id,
+                            None => {
+                                self.errors
+                                    .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                                self.input_mode = InputMode::Selecting;
+                                return Ok(());
+                            }
+                        };
+                        cli_or_room = true;
+                    } else {
+                        receiver = match self.current_room {
+                            Some(room) => room,
+                            None => {
+                                self.errors
+                                    .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                                self.input_mode = InputMode::Selecting;
+                                return Ok(());
+                            }
+                        };
+                        cli_or_room = false;
+                    }
+                    let entry = InboxEntry::new(
+                        std::time::SystemTime::now(),
+                        msg,
+                        sender,
+                        receiver,
+                        cli_or_room,
+                    );
                     if let Err(e) = net_handle.send_message(entry) {
                         self.errors.push((std::time::Instant::now(), e));
                     }

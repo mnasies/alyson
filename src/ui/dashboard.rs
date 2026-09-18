@@ -53,7 +53,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
             }
-            ActionState::SendMessage => {
+            ActionState::SendMessage | ActionState::SendMessageToRoom => {
                 if let app::DashBoardView::ClientView(id, _) = &app.dashboard_view {
                     draw_client_info(frame, canvas, app, *id);
                 }
@@ -359,13 +359,6 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         frame.render_widget(random, messages_area);
     }
 
-    let placeholder;
-    if is_member {
-        placeholder = Paragraph::new("Press Enter to type a message");
-    } else {
-        placeholder = Paragraph::new("Join Room");
-    }
-
     let style = if app.selected.roombox_selected {
         Style::default().add_modifier(Modifier::REVERSED)
     } else {
@@ -374,7 +367,20 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
     let input_block = Block::default()
         .borders(Borders::TOP) // just a line, not a full nested box
         .style(style);
-    frame.render_widget(placeholder.block(input_block), input_area);
+
+    if matches!(app.input_mode, app::InputMode::Typing) {
+        let content = format!("{}_", app.buf.msg_to_client);
+        let info = Paragraph::new(content).block(input_block);
+        frame.render_widget(info, input_area);
+    } else {
+        let placeholder;
+        if is_member {
+            placeholder = Paragraph::new("Press Enter to type a message");
+        } else {
+            placeholder = Paragraph::new("Join Room");
+        }
+        frame.render_widget(placeholder.block(input_block), input_area);
+    }
 }
 
 fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
