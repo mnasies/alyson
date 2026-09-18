@@ -296,23 +296,68 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
     let inner_area = outer.inner(room_chunk[1]); // area inside the outer border
     frame.render_widget(outer, room_chunk[1]); // draw outer box first
 
-    let mut is_member = false;
-    if let Some(room_id) = app.current_room {
-        if let Some(room) = app.rooms.iter().find(|room| room.id == room_id) {
-            if let Some(cli_id) = app.current_clients.0 {
-                match room.members.iter().find(|id| **id == cli_id) {
-                    Some(_) => is_member = true,
-                    None => is_member = false,
-                }
-            }
-        }
-    }
-
+    let is_member = app.verify_current_room_member();
     let [messages_area, input_area] =
         Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
             .areas(inner_area);
-    let random = Paragraph::new("random");
-    frame.render_widget(random, messages_area);
+
+    let Some(room_id) = app.current_room else {
+        let placeholder = Paragraph::new("Join the room to start chatting");
+        frame.render_widget(placeholder, messages_area);
+        return;
+    };
+
+    let Some(sender_id) = app.current_clients.0 else {
+        let placeholder = Paragraph::new("Join the room to start chatting");
+        frame.render_widget(placeholder, messages_area);
+        return;
+    };
+
+    if is_member {
+        let mut convo: Vec<&InboxEntry> = app
+            .inboxes
+            .iter()
+            .filter(|e| e.to == room_id && e.cli_or_room == false)
+            .collect();
+        convo.sort_by_key(|e| e.time);
+
+        let max_bubble_width = (messages_area.width as usize).saturating_sub(6).min(40);
+
+        let mut all_lines: Vec<Line> = Vec::new();
+        for entry in &convo {
+            let is_outgoing = entry.from == sender_id;
+            let color = if is_outgoing {
+                Color::Cyan
+            } else {
+                Color::Green
+            };
+            all_lines.extend(build_bubble(
+                &entry.msg,
+                max_bubble_width,
+                color,
+                is_outgoing,
+            ));
+        }
+
+        let area_height = messages_area.height as usize;
+        let total = all_lines.len();
+
+        // Clamp scroll so you can't scroll past the top.
+        let max_scroll = total.saturating_sub(area_height);
+        app.messages_scroll = app.messages_scroll.min(max_scroll);
+
+        // end_idx moves up as messages_scroll increases; start_idx follows area_height behind it.
+        let end_idx = total.saturating_sub(app.messages_scroll);
+        let start_idx = end_idx.saturating_sub(area_height);
+
+        let visible_lines = all_lines[start_idx..end_idx].to_vec();
+
+        let messages_list_widget = Paragraph::new(visible_lines);
+        frame.render_widget(messages_list_widget, messages_area);
+    } else {
+        let random = Paragraph::new("");
+        frame.render_widget(random, messages_area);
+    }
 
     let placeholder;
     if is_member {

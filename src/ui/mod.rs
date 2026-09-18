@@ -45,8 +45,6 @@ pub async fn run(
             draw_error_toast(frame, &main_app);
         })?;
 
-        // We use a combination of event polling and network event receiving.
-        // To avoid blocking the network events, we poll for crossterm events with a short timeout.
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 if matches!(main_app.input_mode, app::InputMode::Typing) {
@@ -87,7 +85,7 @@ pub async fn run(
                         _ => {}
                     },
                     app::Screen::Dashboard => {
-                        handle_dashboard_events(key, &mut main_app);
+                        handle_dashboard_events(key, &mut main_app, &net_handle);
                     }
                     _ => {}
                 }
@@ -129,13 +127,20 @@ pub async fn run(
                 NetworkEvent::RoomCreated { room } => {
                     main_app.rooms.push(room);
                 }
+                NetworkEvent::JoinedRoom { client_id, room_id } => {
+                    for room in main_app.rooms.iter_mut() {
+                        if room.id == room_id {
+                            room.add_member(client_id);
+                        }
+                    }
+                }
             }
         }
     }
     Ok(())
 }
 
-fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
+fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &NetworkHandle) {
     match main_app.focus {
         app::Focus::ClientList => match key.code {
             KeyCode::Up => {
@@ -228,6 +233,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.buf.new_client_name.clear();
+                    main_app.action_state = app::ActionState::None;
                 }
                 Some(1) => {
                     main_app.input_mode = app::InputMode::Typing;
@@ -434,7 +440,15 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.selected.roombox_selected = false;
                 main_app.selected.room_list_selected = Some(0);
             }
-            KeyCode::Enter => {}
+            KeyCode::Enter => {
+                if !main_app.verify_current_room_member() {
+                    if let Some(cli_id) = main_app.current_clients.0 {
+                        if let Some(room_id) = main_app.current_room {
+                            let _ = net_handle.join_room(cli_id, room_id);
+                        }
+                    }
+                }
+            }
             _ => {}
         },
         app::Focus::None => {}

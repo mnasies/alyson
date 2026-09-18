@@ -21,6 +21,7 @@ pub enum NetworkCommand {
     SpawnClient { username: String },
     CreateRoom { username: String },
     SendMessage { data: InboxEntry },
+    JoinRoom { client_id: usize, room_id: usize },
 }
 
 #[derive(Debug)]
@@ -36,6 +37,10 @@ pub enum NetworkEvent {
     },
     RoomCreated {
         room: Room,
+    },
+    JoinedRoom {
+        client_id: usize,
+        room_id: usize,
     },
     MessageReceived(InboxEntry),
     ErrorOccurred(WireError),
@@ -60,13 +65,19 @@ impl NetworkHandle {
     pub fn send_message(&self, data: InboxEntry) -> Result<(), WireError> {
         self.cmd_tx
             .try_send(NetworkCommand::SendMessage { data })
-            .map_err(|_| WireError::PortNotAvailable)
+            .map_err(|_| WireError::ChannelFailure)
     }
 
     pub fn create_room(&self, name: String) -> Result<(), WireError> {
         self.cmd_tx
             .try_send(NetworkCommand::CreateRoom { username: name })
-            .map_err(|_| WireError::PortNotAvailable)
+            .map_err(|_| WireError::ChannelFailure)
+    }
+
+    pub fn join_room(&self, client_id: usize, room_id: usize) -> Result<(), WireError> {
+        self.cmd_tx
+            .try_send(NetworkCommand::JoinRoom { client_id, room_id })
+            .map_err(|_| WireError::ChannelFailure)
     }
 }
 
@@ -168,6 +179,7 @@ pub async fn run_network_engine(
 
     // Handle UI commands
     let clients = Arc::clone(&net_state.clients);
+    let rooms = Arc::clone(&net_state.rooms);
     let event_tx_clone = net_state.event_tx.clone();
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
@@ -202,6 +214,17 @@ pub async fn run_network_engine(
                 let _ = net_state.rooms.lock().await.insert(room_id, room.clone());
                 let _ = event_tx_clone
                     .send(NetworkEvent::RoomCreated { room })
+                    .await;
+            }
+            NetworkCommand::JoinRoom { client_id, room_id } => {
+                let mut rooms_lock = rooms.lock().await;
+                for (id, room) in rooms_lock.iter_mut() {
+                    if *id == room_id {
+                        room.add_member(client_id);
+                    }
+                }
+                let _ = event_tx_clone
+                    .send(NetworkEvent::JoinedRoom { client_id, room_id })
                     .await;
             }
         }

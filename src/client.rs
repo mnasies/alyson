@@ -74,4 +74,16 @@ impl Room {
             members: HashSet::new(),
         }
     }
+
+    pub fn is_member(&self, id: usize) -> bool {
+        match self.members.iter().find(|n| **n == id) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    // if the passed client_id already existed it does nothing
+    pub fn add_member(&mut self, id: usize) {
+        self.members.insert(id);
+    }
 }

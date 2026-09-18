@@ -150,6 +150,19 @@ impl App {
         }
     }
 
+    pub fn verify_current_room_member(&mut self) -> bool {
+        if let Some(room_id) = self.current_room {
+            if let Some(room) = self.rooms.iter().find(|room| room.id == room_id) {
+                if let Some(cli_id) = self.current_clients.0 {
+                    if room.is_member(cli_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn verify_client(&mut self, name: String) -> Result<usize, WireError> {
         if name.is_empty() {
             return Err(WireError::InvalidName);
@@ -182,7 +195,7 @@ impl App {
                     // actually create the client — network call, next
                     net_handle.create_room(name)?;
                 }
-                self.buf.new_client_name.clear();
+                self.buf.new_room_name.clear();
             }
             ActionState::SendMessage => {
                 let msg = self.buf.msg_to_client.trim().to_string();
