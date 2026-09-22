@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -55,5 +56,34 @@ impl Client {
             ip,
             port,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Room {
+    pub id: usize,
+    pub username: String,
+    pub members: HashSet<usize>,
+}
+
+impl Room {
+    pub fn new(id: usize, username: String) -> Self {
+        Self {
+            id,
+            username,
+            members: HashSet::new(),
+        }
+    }
+
+    pub fn is_member(&self, id: usize) -> bool {
+        match self.members.iter().find(|n| **n == id) {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    // if the passed client_id already existed it does nothing
+    pub fn add_member(&mut self, id: usize) {
+        self.members.insert(id);
     }
 }

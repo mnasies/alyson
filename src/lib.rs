@@ -21,6 +21,8 @@ pub enum WireError {
     ChannelNotFound,
     SenderNotFound,
     ReceiverNotFound,
+    ClientNotFound,
+    ChannelFailure,
 }
 
 impl From<std::io::Error> for WireError {
@@ -37,6 +39,7 @@ impl std::fmt::Display for WireError {
             WireError::HandshakeFailed(s) => write!(f, "handshake failed: {s}"),
             WireError::Disconnected => write!(f, "client disconnected"),
             WireError::PortNotAvailable => write!(f, "port not available"),
+            WireError::ClientNotFound => write!(f, "client not found"),
             WireError::TcpConnectionFailed(e) => write!(f, "TCP connection failed: {e}"),
             WireError::ChannelNotFound => write!(f, "channel not found"),
             WireError::PayloadTooLarge => write!(f, "payload too large"),
@@ -44,6 +47,7 @@ impl std::fmt::Display for WireError {
             WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
             WireError::SenderNotFound => write!(f, "sender not found"),
             WireError::ReceiverNotFound => write!(f, "receiver not found"),
+            WireError::ChannelFailure => write!(f, "mpsc channel failued to transfer data"),
         }
     }
 }
