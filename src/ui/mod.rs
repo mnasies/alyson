@@ -45,8 +45,6 @@ pub async fn run(
             draw_error_toast(frame, &main_app);
         })?;
 
-        // We use a combination of event polling and network event receiving.
-        // To avoid blocking the network events, we poll for crossterm events with a short timeout.
         if event::poll(Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 if matches!(main_app.input_mode, app::InputMode::Typing) {
@@ -87,7 +85,7 @@ pub async fn run(
                         _ => {}
                     },
                     app::Screen::Dashboard => {
-                        handle_dashboard_events(key, &mut main_app);
+                        handle_dashboard_events(key, &mut main_app, &net_handle);
                     }
                     _ => {}
                 }
@@ -121,10 +119,22 @@ pub async fn run(
                     }
                 }
                 NetworkEvent::MessageReceived(entry) => {
-                    main_app.inboxes.push(entry);
+                    if !main_app.inboxes.contains(&entry) {
+                        main_app.inboxes.push(entry);
+                    }
                 }
                 NetworkEvent::ErrorOccurred(err) => {
                     main_app.errors.push((Instant::now(), err));
+                }
+                NetworkEvent::RoomCreated { room } => {
+                    main_app.rooms.push(room);
+                }
+                NetworkEvent::JoinedRoom { client_id, room_id } => {
+                    for room in main_app.rooms.iter_mut() {
+                        if room.id == room_id {
+                            room.add_member(client_id);
+                        }
+                    }
                 }
             }
         }
@@ -132,7 +142,7 @@ pub async fn run(
     Ok(())
 }
 
-fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
+fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &NetworkHandle) {
     match main_app.focus {
         app::Focus::ClientList => match key.code {
             KeyCode::Up => {
@@ -182,6 +192,11 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                         main_app.selected.action_selected = None;
                         main_app.selected.inbox_cli_selected = Some(0);
                     }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
+                    }
                     _ => {}
                 }
                 main_app.selected.cli_opt_selected = None;
@@ -216,12 +231,19 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                     main_app.selected.cli_opt_selected = Some(cli_opt + 1);
                 }
             }
-            KeyCode::Enter => {
-                if let Some(0) = main_app.selected.cli_opt_selected {
+            KeyCode::Enter => match main_app.selected.cli_opt_selected {
+                Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.buf.new_client_name.clear();
+                    main_app.action_state = app::ActionState::None;
                 }
-            }
+                Some(1) => {
+                    main_app.input_mode = app::InputMode::Typing;
+                    main_app.buf.new_room_name.clear();
+                    main_app.action_state = app::ActionState::CreateChatRoom;
+                }
+                _ => {}
+            },
             KeyCode::Right => {
                 match main_app.dashboard_view {
                     DashBoardView::ClientView(_, app::CurrentWindow::ActionList) => {
@@ -233,6 +255,11 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                         main_app.focus = app::Focus::InboxCli;
                         main_app.selected.action_selected = None;
                         main_app.selected.inbox_cli_selected = Some(0);
+                    }
+                    DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
                     }
                     _ => {}
                 }
@@ -278,6 +305,17 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                             DashBoardView::ClientView(id, app::CurrentWindow::Inbox);
                     }
                 }
+                Some(1) => {
+                    if let DashBoardView::ClientView(id, app::CurrentWindow::ActionList) =
+                        main_app.dashboard_view
+                    {
+                        main_app.selected.action_selected = None;
+                        main_app.selected.room_list_selected = Some(0);
+                        main_app.focus = app::Focus::RoomInterface;
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(id, app::CurrentWindow::Room);
+                    }
+                }
                 _ => {}
             },
             _ => {}
@@ -314,6 +352,21 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
                 main_app.selected.inbox_cli_selected = None;
                 main_app.selected.inbox_selected = true;
             }
+            KeyCode::Esc => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.selected.action_selected = Some(0);
+                match main_app.current_clients.0 {
+                    Some(n) => {
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(n, app::CurrentWindow::ActionList);
+                    }
+                    None => {
+                        main_app
+                            .errors
+                            .push((Instant::now(), WireError::ClientNotFound));
+                    }
+                }
+            }
             _ => {}
         },
         app::Focus::InboxWindow => match key.code {
@@ -331,6 +384,75 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App) {
             }
             KeyCode::PageDown => {
                 main_app.messages_scroll = main_app.messages_scroll.saturating_sub(5); // scroll down 5 lines
+            }
+            _ => {}
+        },
+        app::Focus::RoomInterface => match key.code {
+            KeyCode::Up => {
+                let cli = match main_app.selected.room_list_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                if cli > 0 {
+                    main_app.selected.room_list_selected = Some(cli - 1);
+                }
+            }
+            KeyCode::Down => {
+                let cli = match main_app.selected.room_list_selected {
+                    Some(n) => n,
+                    None => 0,
+                };
+                let last_index = main_app.clients.len().saturating_sub(1);
+                if cli < last_index {
+                    main_app.selected.room_list_selected = Some(cli + 1);
+                }
+            }
+            KeyCode::Left => {
+                main_app.focus = app::Focus::ClientList;
+                main_app.selected.action_selected = None;
+                main_app.selected.client_selected = Some(0);
+                main_app.selected.room_list_selected = None;
+            }
+            KeyCode::Right | KeyCode::Enter => {
+                main_app.focus = app::Focus::RoomboxWindow;
+                main_app.selected.action_selected = None;
+                main_app.selected.room_list_selected = None;
+                main_app.selected.roombox_selected = true;
+            }
+            KeyCode::Esc => {
+                main_app.focus = app::Focus::ActionList;
+                main_app.selected.action_selected = Some(0);
+                match main_app.current_clients.0 {
+                    Some(n) => {
+                        main_app.dashboard_view =
+                            DashBoardView::ClientView(n, app::CurrentWindow::ActionList);
+                    }
+                    None => {
+                        main_app
+                            .errors
+                            .push((Instant::now(), WireError::ClientNotFound));
+                    }
+                }
+            }
+            _ => {}
+        },
+        app::Focus::RoomboxWindow => match key.code {
+            KeyCode::Esc | KeyCode::Left => {
+                main_app.focus = app::Focus::RoomInterface;
+                main_app.selected.roombox_selected = false;
+                main_app.selected.room_list_selected = Some(0);
+            }
+            KeyCode::Enter => {
+                if main_app.verify_current_room_member() {
+                    main_app.action_state = app::ActionState::SendMessageToRoom;
+                    main_app.input_mode = app::InputMode::Typing;
+                } else {
+                    if let Some(cli_id) = main_app.current_clients.0 {
+                        if let Some(room_id) = main_app.current_room {
+                            let _ = net_handle.join_room(cli_id, room_id);
+                        }
+                    }
+                }
             }
             _ => {}
         },

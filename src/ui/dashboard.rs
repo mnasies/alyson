@@ -48,7 +48,12 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
             }
-            ActionState::SendMessage => {
+            ActionState::CreateChatRoom => {
+                let content = format!("New room name:\n\n{}_", app.buf.new_room_name);
+                let info = Paragraph::new(content).block(block_left);
+                frame.render_widget(info, canvas);
+            }
+            ActionState::SendMessage | ActionState::SendMessageToRoom => {
                 if let app::DashBoardView::ClientView(id, _) = &app.dashboard_view {
                     draw_client_info(frame, canvas, app, *id);
                 }
@@ -133,119 +138,248 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
             frame.render_widget(actions_list, chunks[1]);
         }
         app::DashBoardView::ClientView(_, app::CurrentWindow::Inbox) => {
-            let inbox_chunk = Layout::default()
-                .direction(Direction::Horizontal)
-                .margin(1)
-                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-                .split(chunks[1]);
-
-            let mut clients_clone = app.clients.clone();
-            clients_clone.retain(|cli| Some(cli.id) != app.current_clients.0);
-            let all_clients_list: Vec<ListItem> = clients_clone
-                .iter()
-                .enumerate()
-                .map(|(i, cli)| {
-                    let style = match app.selected.inbox_cli_selected {
-                        Some(n) => {
-                            if i == n {
-                                app.current_clients.1 = Some(cli.id);
-                                Style::default().add_modifier(Modifier::REVERSED)
-                            } else {
-                                Style::default()
-                            }
-                        }
-                        None => Style::default(),
-                    };
-                    let line = Line::from(cli.name.clone()).alignment(Alignment::Left);
-                    ListItem::new(line).style(style)
-                })
-                .collect();
-            let list = List::new(all_clients_list).block(Block::default().borders(Borders::all()));
-
-            frame.render_widget(list, inbox_chunk[0]);
-
-            let outer = Block::default()
-                .title(" Send Message ")
-                .borders(Borders::ALL);
-
-            let inner_area = outer.inner(inbox_chunk[1]); // area inside the outer border
-            frame.render_widget(outer, inbox_chunk[1]); // draw outer box first
-
-            let [messages_area, input_area] =
-                Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
-                    .areas(inner_area);
-
-            let (Some(sender_id), Some(receiver_id)) = app.current_clients else {
-                let placeholder = Paragraph::new("Select a client to start chatting");
-                frame.render_widget(placeholder, messages_area);
-                return;
-            };
-
-            let mut convo: Vec<&InboxEntry> = app
-                .inboxes
-                .iter()
-                .filter(|e| {
-                    (e.from == sender_id && e.to == receiver_id)
-                        || (e.from == receiver_id && e.to == sender_id)
-                })
-                .collect();
-            convo.sort_by_key(|e| e.time);
-
-            let max_bubble_width = (messages_area.width as usize).saturating_sub(6).min(40);
-
-            let mut all_lines: Vec<Line> = Vec::new();
-            for entry in &convo {
-                let is_outgoing = entry.from == sender_id;
-                let color = if is_outgoing {
-                    Color::Cyan
-                } else {
-                    Color::Green
-                };
-                all_lines.extend(build_bubble(
-                    &entry.msg,
-                    max_bubble_width,
-                    color,
-                    is_outgoing,
-                ));
-            }
-
-            let area_height = messages_area.height as usize;
-            let total = all_lines.len();
-
-            // Clamp scroll so you can't scroll past the top.
-            let max_scroll = total.saturating_sub(area_height);
-            app.messages_scroll = app.messages_scroll.min(max_scroll);
-
-            // end_idx moves up as messages_scroll increases; start_idx follows area_height behind it.
-            let end_idx = total.saturating_sub(app.messages_scroll);
-            let start_idx = end_idx.saturating_sub(area_height);
-
-            let visible_lines = all_lines[start_idx..end_idx].to_vec();
-
-            let messages_list_widget = Paragraph::new(visible_lines);
-            frame.render_widget(messages_list_widget, messages_area);
-
-            // input: bordered on top only → reads as a "divider line" not a second box
-            let style = if app.selected.inbox_selected {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-            };
-
-            let input_block = Block::default()
-                .borders(Borders::TOP) // just a line, not a full nested box
-                .style(style);
-
-            if matches!(app.input_mode, app::InputMode::Typing) {
-                let content = format!("{}_", app.buf.msg_to_client);
-                let info = Paragraph::new(content).block(input_block);
-                frame.render_widget(info, input_area);
-            } else {
-                let placeholder = Paragraph::new("Press Enter to type a message");
-                frame.render_widget(placeholder.block(input_block), input_area);
-            }
+            draw_inbox_window(frame, chunks[1], app);
+        }
+        app::DashBoardView::ClientView(_, app::CurrentWindow::Room) => {
+            draw_room_window(frame, chunks[1], app);
         }
         _ => {}
+    }
+}
+
+fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
+    let inbox_chunk = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(canvas);
+
+    let mut clients_clone = app.clients.clone();
+    clients_clone.retain(|cli| Some(cli.id) != app.current_clients.0);
+    let all_clients_list: Vec<ListItem> = clients_clone
+        .iter()
+        .enumerate()
+        .map(|(i, cli)| {
+            let style = match app.selected.inbox_cli_selected {
+                Some(n) => {
+                    if i == n {
+                        app.current_clients.1 = Some(cli.id);
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
+            };
+            let line = Line::from(cli.name.clone()).alignment(Alignment::Left);
+            ListItem::new(line).style(style)
+        })
+        .collect();
+    let list = List::new(all_clients_list).block(Block::default().borders(Borders::all()));
+
+    frame.render_widget(list, inbox_chunk[0]);
+
+    let outer = Block::default()
+        .title(" Send Message ")
+        .borders(Borders::ALL);
+
+    let inner_area = outer.inner(inbox_chunk[1]); // area inside the outer border
+    frame.render_widget(outer, inbox_chunk[1]); // draw outer box first
+
+    let [messages_area, input_area] =
+        Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
+            .areas(inner_area);
+
+    let (Some(sender_id), Some(receiver_id)) = app.current_clients else {
+        let placeholder = Paragraph::new("Select a client to start chatting");
+        frame.render_widget(placeholder, messages_area);
+        return;
+    };
+
+    let mut convo: Vec<&InboxEntry> = app
+        .inboxes
+        .iter()
+        .filter(|e| {
+            (e.from == sender_id && e.to == receiver_id && e.cli_or_room == true)
+                || (e.from == receiver_id && e.to == sender_id && e.cli_or_room == true)
+        })
+        .collect();
+    convo.sort_by_key(|e| e.time);
+
+    let max_bubble_width = (messages_area.width as usize).saturating_sub(6).min(40);
+
+    let mut all_lines: Vec<Line> = Vec::new();
+    for entry in &convo {
+        let is_outgoing = entry.from == sender_id;
+        let color = if is_outgoing {
+            Color::Cyan
+        } else {
+            Color::Green
+        };
+        all_lines.extend(build_bubble(
+            &entry.msg,
+            max_bubble_width,
+            color,
+            is_outgoing,
+        ));
+    }
+
+    let area_height = messages_area.height as usize;
+    let total = all_lines.len();
+
+    // Clamp scroll so you can't scroll past the top.
+    let max_scroll = total.saturating_sub(area_height);
+    app.messages_scroll = app.messages_scroll.min(max_scroll);
+
+    // end_idx moves up as messages_scroll increases; start_idx follows area_height behind it.
+    let end_idx = total.saturating_sub(app.messages_scroll);
+    let start_idx = end_idx.saturating_sub(area_height);
+
+    let visible_lines = all_lines[start_idx..end_idx].to_vec();
+
+    let messages_list_widget = Paragraph::new(visible_lines);
+    frame.render_widget(messages_list_widget, messages_area);
+
+    // input: bordered on top only → reads as a "divider line" not a second box
+    let style = if app.selected.inbox_selected {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    };
+
+    let input_block = Block::default()
+        .borders(Borders::TOP) // just a line, not a full nested box
+        .style(style);
+
+    if matches!(app.input_mode, app::InputMode::Typing) {
+        let content = format!("{}_", app.buf.msg_to_client);
+        let info = Paragraph::new(content).block(input_block);
+        frame.render_widget(info, input_area);
+    } else {
+        let placeholder = Paragraph::new("Press Enter to type a message");
+        frame.render_widget(placeholder.block(input_block), input_area);
+    }
+}
+
+fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
+    let room_chunk = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(canvas);
+
+    let rooms_clone = app.rooms.clone();
+    let all_rooms_list: Vec<ListItem> = rooms_clone
+        .iter()
+        .enumerate()
+        .map(|(i, room)| {
+            let style = match app.selected.room_list_selected {
+                Some(n) => {
+                    if i == n {
+                        app.current_room = Some(room.id);
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    }
+                }
+                None => Style::default(),
+            };
+            let line = Line::from(room.username.clone()).alignment(Alignment::Left);
+            ListItem::new(line).style(style)
+        })
+        .collect();
+    let list = List::new(all_rooms_list).block(Block::default().borders(Borders::all()));
+
+    frame.render_widget(list, room_chunk[0]);
+    let outer = Block::default().title(" Chat Room ").borders(Borders::ALL);
+
+    let inner_area = outer.inner(room_chunk[1]); // area inside the outer border
+    frame.render_widget(outer, room_chunk[1]); // draw outer box first
+
+    let is_member = app.verify_current_room_member();
+    let [messages_area, input_area] =
+        Layout::vertical([Constraint::Percentage(80), Constraint::Percentage(20)])
+            .areas(inner_area);
+
+    let Some(room_id) = app.current_room else {
+        let placeholder = Paragraph::new("Join the room to start chatting");
+        frame.render_widget(placeholder, messages_area);
+        return;
+    };
+
+    let Some(sender_id) = app.current_clients.0 else {
+        let placeholder = Paragraph::new("Join the room to start chatting");
+        frame.render_widget(placeholder, messages_area);
+        return;
+    };
+
+    if is_member {
+        let mut convo: Vec<&InboxEntry> = app
+            .inboxes
+            .iter()
+            .filter(|e| e.to == room_id && e.cli_or_room == false)
+            .collect();
+        convo.sort_by_key(|e| e.time);
+
+        let max_bubble_width = (messages_area.width as usize).saturating_sub(6).min(40);
+
+        let mut all_lines: Vec<Line> = Vec::new();
+        for entry in &convo {
+            let is_outgoing = entry.from == sender_id;
+            let color = if is_outgoing {
+                Color::Cyan
+            } else {
+                Color::Green
+            };
+            all_lines.extend(build_bubble(
+                &entry.msg,
+                max_bubble_width,
+                color,
+                is_outgoing,
+            ));
+        }
+
+        let area_height = messages_area.height as usize;
+        let total = all_lines.len();
+
+        // Clamp scroll so you can't scroll past the top.
+        let max_scroll = total.saturating_sub(area_height);
+        app.messages_scroll = app.messages_scroll.min(max_scroll);
+
+        // end_idx moves up as messages_scroll increases; start_idx follows area_height behind it.
+        let end_idx = total.saturating_sub(app.messages_scroll);
+        let start_idx = end_idx.saturating_sub(area_height);
+
+        let visible_lines = all_lines[start_idx..end_idx].to_vec();
+
+        let messages_list_widget = Paragraph::new(visible_lines);
+        frame.render_widget(messages_list_widget, messages_area);
+    } else {
+        let random = Paragraph::new("");
+        frame.render_widget(random, messages_area);
+    }
+
+    let style = if app.selected.roombox_selected {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    };
+    let input_block = Block::default()
+        .borders(Borders::TOP) // just a line, not a full nested box
+        .style(style);
+
+    if matches!(app.input_mode, app::InputMode::Typing) {
+        let content = format!("{}_", app.buf.msg_to_client);
+        let info = Paragraph::new(content).block(input_block);
+        frame.render_widget(info, input_area);
+    } else {
+        let placeholder;
+        if is_member {
+            placeholder = Paragraph::new("Press Enter to type a message");
+        } else {
+            placeholder = Paragraph::new("Join Room");
+        }
+        frame.render_widget(placeholder.block(input_block), input_area);
     }
 }
 
