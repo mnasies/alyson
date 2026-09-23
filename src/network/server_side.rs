@@ -1,6 +1,7 @@
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
-use crate::network::{NetworkEvent, NetworkState, framing};
+use crate::network::{NetworkEvent, ServerState, framing};
+use crate::types::{Client, InboxEntry, WireMessage};
+use tokio::io::AsyncWriteExt;
 
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -8,7 +9,7 @@ use tokio::net::TcpStream;
 // Server Side Handling
 pub async fn handle_incoming_connection(
     stream: TcpStream,
-    net_state: Arc<NetworkState>,
+    net_state: Arc<ServerState>,
 ) -> Result<(), WireError> {
     use tokio::io::AsyncBufReadExt;
 
@@ -18,7 +19,7 @@ pub async fn handle_incoming_connection(
     let event_tx = net_state.event_tx.clone();
 
     // Read first line as username (handshake)
-    let (reader, writer) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
     let mut reader = tokio::io::BufReader::new(reader);
     let mut username = String::new();
     match reader.read_line(&mut username).await {
@@ -39,7 +40,7 @@ pub async fn handle_incoming_connection(
     let port = peer_addr.port();
 
     // Create server communication channel
-    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<InboxEntry>(32);
+    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<WireMessage>(32);
 
     let client = Client::new(
         client_id,
@@ -49,6 +50,8 @@ pub async fn handle_incoming_connection(
         ip.clone(),
         port,
     );
+    // Send the Client ID to the client as part of the handshake protocol
+    writer.write_all(&client_id.to_string().as_bytes()).await?;
     {
         let mut lock = clients.lock().await;
         lock.insert(client_id, client.clone());

@@ -1,6 +1,6 @@
 use crate::WireError;
-use crate::client::{InboxEntry, Room};
 use crate::network::NetworkHandle;
+use crate::types::{InboxEntry, Room};
 use std::time::Instant;
 
 #[derive(Clone)]
@@ -59,6 +59,11 @@ pub enum Focus {
     RoomboxWindow,
     RoomInterface,
     None,
+}
+
+pub enum IdentityMode {
+    Default,
+    Fixed(usize),
 }
 
 pub struct AppBuf {
@@ -120,6 +125,7 @@ pub struct App {
     pub current_room: Option<usize>,
     pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
     pub rooms: Vec<Room>,
+    pub identity_mode: IdentityMode,
 }
 
 impl App {
@@ -139,6 +145,7 @@ impl App {
             current_room: None,
             messages_scroll: 0,
             rooms: Vec::new(),
+            identity_mode: IdentityMode::Default,
         }
     }
 
@@ -155,9 +162,9 @@ impl App {
 
     pub fn verify_current_room_member(&mut self) -> bool {
         if let Some(room_id) = self.current_room {
-            if let Some(room) = self.rooms.iter().find(|room| room.id == room_id) {
+            if let Some(room) = self.rooms.iter().find(|room| room.id as usize == room_id) {
                 if let Some(cli_id) = self.current_clients.0 {
-                    if room.is_member(cli_id) {
+                    if room.is_member(cli_id as u64) {
                         return true;
                     }
                 }
@@ -172,7 +179,7 @@ impl App {
         } else {
             for client in self.clients.iter() {
                 if name == client.name {
-                    return Ok(client.id);
+                    return Ok(client.id as usize);
                 }
             }
         }
@@ -240,8 +247,8 @@ impl App {
                     let entry = InboxEntry::new(
                         std::time::SystemTime::now(),
                         msg,
-                        sender,
-                        receiver,
+                        sender as u64,
+                        receiver as u64,
                         cli_or_room,
                     );
                     if let Err(e) = net_handle.send_message(entry) {

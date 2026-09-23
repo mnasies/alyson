@@ -1,89 +1,54 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::time::SystemTime;
+use alyson::WireError;
+use alyson::network::{NetworkHandle, run_network_engine};
+use alyson::ui::run;
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io::stdout;
+use tokio::sync::mpsc;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct InboxEntry {
-    pub time: SystemTime,
-    pub msg: String,
-    pub from: usize,       // Client ID
-    pub to: usize,         // Client ID or Room ID
-    pub cli_or_room: bool, // true = message is from Client (to: ClientID), false = vice-versa
+fn reset_terminal() {
+    use std::io::Write;
+    let _ = disable_raw_mode();
+    let mut stdout = stdout();
+    let _ = execute!(stdout, LeaveAlternateScreen, crossterm::cursor::Show);
+    let _ = stdout.flush();
 }
 
-impl InboxEntry {
-    pub fn new(time: SystemTime, msg: String, from: usize, to: usize, cli_or_room: bool) -> Self {
-        InboxEntry {
-            time,
-            msg,
-            from,
-            to,
-            cli_or_room,
-        }
-    }
-}
+#[tokio::main]
+async fn main() -> Result<(), WireError> {
+    // --- panic hook setup to prevent breaking terminal on panic ---
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        reset_terminal();
+        original_hook(panic_info);
+        // Explicitly exit the process so background panics kill the UI too
+        std::process::exit(1);
+    }));
 
-impl std::fmt::Display for InboxEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.msg)
-    }
-}
+    // --- channels setup ---
+    let (cmd_tx, cmd_rx) = mpsc::channel(100);
+    let (event_tx, event_rx) = mpsc::channel(100);
 
-#[derive(Debug, Clone)]
-pub struct Client {
-    pub id: usize,
-    pub username: String,
-    pub cmd_tx: Option<tokio::sync::mpsc::Sender<InboxEntry>>,
-    pub writer: tokio::sync::mpsc::Sender<InboxEntry>,
-    pub ip: String,
-    pub port: u16,
-}
+    let net_handle = NetworkHandle::new(cmd_tx);
 
-impl Client {
-    pub fn new(
-        id: usize,
-        username: String,
-        cmd_tx: Option<tokio::sync::mpsc::Sender<InboxEntry>>,
-        writer: tokio::sync::mpsc::Sender<InboxEntry>,
-        ip: String,
-        port: u16,
-    ) -> Self {
-        Self {
-            id,
-            username,
-            cmd_tx,
-            writer,
-            ip,
-            port,
-        }
-    }
-}
+    // --- run network engine ---
+    tokio::spawn(run_network_engine(cmd_rx, event_tx));
 
-#[derive(Debug, Clone)]
-pub struct Room {
-    pub id: usize,
-    pub username: String,
-    pub members: HashSet<usize>,
-}
+    // --- terminal setup ---
+    enable_raw_mode()?;
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-impl Room {
-    pub fn new(id: usize, username: String) -> Self {
-        Self {
-            id,
-            username,
-            members: HashSet::new(),
-        }
-    }
+    // --- run ui ---
+    let result = run(&mut terminal, net_handle, event_rx).await;
 
-    pub fn is_member(&self, id: usize) -> bool {
-        match self.members.iter().find(|n| **n == id) {
-            Some(_) => true,
-            None => false,
-        }
-    }
+    // --- teardown ---
+    reset_terminal();
 
-    // if the passed client_id already existed it does nothing
-    pub fn add_member(&mut self, id: usize) {
-        self.members.insert(id);
-    }
+    result
 }

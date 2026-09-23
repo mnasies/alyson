@@ -1,3 +1,4 @@
+use crate::client::WireMessage;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
@@ -62,7 +63,7 @@ pub async fn read_framed_loop<R: AsyncReadExt + Unpin>(
 
 pub async fn write_framed_loop<W: AsyncWriteExt + Unpin>(
     mut writer: W,
-    mut rx: Receiver<InboxEntry>,
+    mut rx: Receiver<WireMessage>,
     event_tx: Sender<NetworkEvent>,
 ) {
     while let Some(msg) = rx.recv().await {

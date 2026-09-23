@@ -102,18 +102,18 @@ pub async fn run(
                     port,
                 } => {
                     main_app.clients.push(app::ClientSummary {
-                        id,
+                        id: id as usize,
                         name: username,
                         ip,
                         port,
                     });
                 }
                 NetworkEvent::ClientDisconnected { id } => {
-                    main_app.clients.retain(|c| c.id != id);
+                    main_app.clients.retain(|c| c.id != id as usize);
                     if let DashBoardView::ClientView(v_id, app::CurrentWindow::ActionList) =
                         main_app.dashboard_view
                     {
-                        if v_id == id {
+                        if v_id == id as usize {
                             main_app.dashboard_view = DashBoardView::Idle;
                         }
                     }
@@ -131,8 +131,8 @@ pub async fn run(
                 }
                 NetworkEvent::JoinedRoom { client_id, room_id } => {
                     for room in main_app.rooms.iter_mut() {
-                        if room.id == room_id {
-                            room.add_member(client_id);
+                        if room.id == room_id as u64 {
+                            room.add_member(client_id as u64);
                         }
                     }
                 }
@@ -159,7 +159,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     Some(n) => n,
                     None => 0,
                 };
-                let last_index = main_app.clients.len().saturating_sub(1);
+                let last_index = main_app.clients.len().saturating_sub(1) as usize;
                 if cli == last_index {
                     main_app.focus = app::Focus::ClientOption;
                     main_app.selected.client_selected = None;
@@ -449,7 +449,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 } else {
                     if let Some(cli_id) = main_app.current_clients.0 {
                         if let Some(room_id) = main_app.current_room {
-                            let _ = net_handle.join_room(cli_id, room_id);
+                            let _ = net_handle.join_room(cli_id as u64, room_id as u64);
                         }
                     }
                 }

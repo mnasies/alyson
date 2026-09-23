@@ -1,5 +1,5 @@
-pub mod client;
 pub mod network;
+pub mod types;
 pub mod ui;
 
 use std::sync::Arc;

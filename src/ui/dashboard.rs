@@ -1,4 +1,4 @@
-use crate::client::InboxEntry;
+use crate::types::InboxEntry;
 use crate::ui::app;
 use crate::ui::app::{ActionState, App};
 
@@ -163,7 +163,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
             let style = match app.selected.inbox_cli_selected {
                 Some(n) => {
                     if i == n {
-                        app.current_clients.1 = Some(cli.id);
+                        app.current_clients.1 = Some(cli.id as usize);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -200,8 +200,10 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .inboxes
         .iter()
         .filter(|e| {
-            (e.from == sender_id && e.to == receiver_id && e.cli_or_room == true)
-                || (e.from == receiver_id && e.to == sender_id && e.cli_or_room == true)
+            (e.from == sender_id as u64 && e.to == receiver_id as u64 && e.cli_or_room == true)
+                || (e.from == receiver_id as u64
+                    && e.to == sender_id as u64
+                    && e.cli_or_room == true)
         })
         .collect();
     convo.sort_by_key(|e| e.time);
@@ -210,7 +212,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
 
     let mut all_lines: Vec<Line> = Vec::new();
     for entry in &convo {
-        let is_outgoing = entry.from == sender_id;
+        let is_outgoing = entry.from == sender_id as u64;
         let color = if is_outgoing {
             Color::Cyan
         } else {
@@ -276,7 +278,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
             let style = match app.selected.room_list_selected {
                 Some(n) => {
                     if i == n {
-                        app.current_room = Some(room.id);
+                        app.current_room = Some(room.id as usize);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -317,7 +319,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         let mut convo: Vec<&InboxEntry> = app
             .inboxes
             .iter()
-            .filter(|e| e.to == room_id && e.cli_or_room == false)
+            .filter(|e| e.to == room_id as u64 && e.cli_or_room == false)
             .collect();
         convo.sort_by_key(|e| e.time);
 
@@ -325,7 +327,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
 
         let mut all_lines: Vec<Line> = Vec::new();
         for entry in &convo {
-            let is_outgoing = entry.from == sender_id;
+            let is_outgoing = entry.from == sender_id as u64;
             let color = if is_outgoing {
                 Color::Cyan
             } else {

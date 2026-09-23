@@ -1,10 +1,9 @@
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
 use crate::network::{NetworkEvent, NetworkState, framing};
+use crate::types::{InboxEntry, WireMessage};
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -20,20 +19,20 @@ pub async fn spawn_client_task(
     let event_tx = net_state.event_tx.clone();
 
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server_port)).await?;
-    let local_port = stream.local_addr()?.port();
 
     // Handshake: write username
     let handshake_msg = format!("{}\n", username);
     stream.write_all(handshake_msg.as_bytes()).await?;
 
-    // Resolve client ID using local port
-    let client_id = resolve_client_id_by_port(&clients, local_port).await?;
-
-    let (reader, writer) = stream.into_split();
-    let reader = BufReader::new(reader);
+    // Resolve client ID by reading the first line of the response
+    let (read_half, writer) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut client_id = String::new();
+    reader.read_line(&mut client_id).await?;
+    let client_id: u64 = client_id.trim().parse().unwrap();
 
     // Create client writer channel
-    let (cmd_tx, cmd_rx) = mpsc::channel::<InboxEntry>(32);
+    let (cmd_tx, cmd_rx) = mpsc::channel::<WireMessage>(32);
 
     // Assign cmd_tx
     {
@@ -75,24 +74,4 @@ pub async fn spawn_client_task(
     });
 
     Ok(())
-}
-
-async fn resolve_client_id_by_port(
-    clients: &Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
-    local_port: u16,
-) -> Result<usize, WireError> {
-    let timeout = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    loop {
-        {
-            let lock = clients.lock().await;
-            if let Some(client) = lock.values().find(|c| c.port == local_port) {
-                return Ok(client.id);
-            }
-        }
-        if start.elapsed() > timeout {
-            return Err(WireError::ClientRegistrationTimeout);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
 }
