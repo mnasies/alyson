@@ -1,16 +1,18 @@
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::Receiver;
 
 use crate::WireError;
-use crate::types::WireMessage;
 use std::sync::Arc;
 
-pub async fn read_framed_loop<R: AsyncReadExt + Unpin>(
+pub async fn read_framed_loop<R, T>(
     mut reader: R,
-    // event_tx_reader: Sender<NetworkEvent>,
-    on_entry: impl AsyncFn(WireMessage),
+    on_entry: impl AsyncFn(T),
     on_error: impl AsyncFn(WireError),
-) {
+) where
+    R: AsyncReadExt + Unpin,
+    T: for<'de> Deserialize<'de>,
+{
     // safe payload cap(10MB)
     const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024;
     loop {
@@ -39,7 +41,7 @@ pub async fn read_framed_loop<R: AsyncReadExt + Unpin>(
         }
 
         // 4. Deserialize struct
-        let msg: WireMessage = match bincode::deserialize(&buffer) {
+        let msg: T = match bincode::deserialize(&buffer) {
             Ok(msg) => msg,
             Err(_) => {
                 on_error(WireError::SerializationFailed).await;
@@ -51,11 +53,14 @@ pub async fn read_framed_loop<R: AsyncReadExt + Unpin>(
     }
 }
 
-pub async fn write_framed_loop<W: AsyncWriteExt + Unpin>(
+pub async fn write_framed_loop<W, T>(
     mut writer: W,
-    mut rx: Receiver<WireMessage>,
+    mut rx: Receiver<T>,
     on_error: impl AsyncFn(WireError),
-) {
+) where
+    W: AsyncWriteExt + Unpin,
+    T: Serialize,
+{
     while let Some(msg) = rx.recv().await {
         let bytes: Vec<u8> = match bincode::serialize(&msg) {
             Ok(bytes) => bytes,

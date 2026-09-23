@@ -1,9 +1,9 @@
 pub mod client_side;
-use crate::types::{Client, ClientInfo, InboxEntry, Room, WireMessage};
-use client_side::spawn_client_task;
+use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room, ServerEvent};
+use client_side::{run_client, spawn_client_task};
 
 pub mod server_side;
-use server_side::handle_incoming_connection;
+use server_side::{handle_incoming_connection, run_server};
 
 pub mod framing;
 
@@ -74,20 +74,18 @@ pub struct ServerState {
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
     pub next_id: Arc<atomic::AtomicU64>,
     pub next_room_id: Arc<atomic::AtomicU64>,
-    pub event_tx: Sender<NetworkEvent>,
 }
 
 impl ServerState {
-    pub async fn new(event_tx: Sender<NetworkEvent>) -> Self {
+    pub async fn new() -> Self {
         ServerState {
             clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(atomic::AtomicU64::new(0)),
             next_room_id: Arc::new(atomic::AtomicU64::new(0)),
-            event_tx,
         }
     }
-    pub async fn register(&mut self, client: ClientInfo) {
+    pub async fn register(&mut self, client: Client) {
         self.clients.lock().await.insert(client.id, client);
     }
 
@@ -95,7 +93,7 @@ impl ServerState {
         self.clients.lock().await.remove(&id);
     }
 
-    pub async fn get(&self, id: u64) -> Option<ClientInfo> {
+    pub async fn get(&self, id: u64) -> Option<Client> {
         self.clients.lock().await.get(&id).cloned()
     }
 
@@ -151,113 +149,20 @@ impl ClientState {
 }
 
 pub async fn run_network_engine(
-    mut cmd_rx: Receiver<NetworkCommand>,
+    cmd_rx: Receiver<NetworkCommand>,
     event_tx: Sender<NetworkEvent>,
 ) -> Result<(), WireError> {
-    // 1. Bind TCP server to random port.
-    // These two failures are unrecoverable: the network engine cannot function
-    // without a listener, so we surface a fatal error and let the panic hook
-    // reset the terminal and exit.
-    let listener = match TcpListener::bind("127.0.0.1:0").await {
-        Ok(l) => l,
+    let server_addr = match run_server("127.0.0.1:0").await {
+        Ok(addr) => addr,
         Err(e) => {
             panic!(
-                "fatal: could not bind TCP listener ({}). The network engine cannot start.",
+                "fatal: could not run server ({}). The network engine cannot start.",
                 e
             );
         }
     };
 
-    let server_port = match listener.local_addr() {
-        Ok(addr) => addr.port(),
-        Err(e) => {
-            panic!(
-                "fatal: could not read local addr of TCP listener ({}). The network engine cannot start.",
-                e
-            );
-        }
-    };
+    run_client(event_tx, cmd_rx, server_addr.as_str()).await?;
 
-    // Map of active client connections on the server side
-    let net_state = Arc::new(NetworkState::new(event_tx.clone()).await);
-
-    // Spawn the server accept loop
-    let net_state_clone = Arc::clone(&net_state);
-    // Server-side task that accepts incoming connections
-    tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let event_tx = net_state_clone.event_tx.clone();
-                    let net_state_inner = Arc::clone(&net_state_clone);
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_incoming_connection(stream, net_state_inner).await {
-                            let _ = event_tx.send(NetworkEvent::ErrorOccurred(e)).await;
-                        }
-                    });
-                }
-                Err(e) => {
-                    let _ = event_tx
-                        .send(NetworkEvent::ErrorOccurred(WireError::TcpConnectionFailed(
-                            Arc::new(e),
-                        )))
-                        .await;
-                }
-            }
-        }
-    });
-
-    // Handle UI commands
-    let clients = Arc::clone(&net_state.clients);
-    let rooms = Arc::clone(&net_state.rooms);
-    let event_tx_clone = net_state.event_tx.clone();
-    while let Some(cmd) = cmd_rx.recv().await {
-        match cmd {
-            NetworkCommand::SpawnClient { username } => {
-                let event_tx_clone = net_state.event_tx.clone();
-                let net_state_client = Arc::clone(&net_state);
-                tokio::spawn(async move {
-                    if let Err(e) = spawn_client_task(username, server_port, net_state_client).await
-                    {
-                        let _ = event_tx_clone.send(NetworkEvent::ErrorOccurred(e)).await;
-                    }
-                });
-            }
-            NetworkCommand::SendMessage { data } => {
-                let clients_lock = clients.lock().await;
-                if let Some(client) = clients_lock.get(&data.from) {
-                    match &client.cmd_tx {
-                        Some(m) => {
-                            let _ = m.send(WireMessage::ChatMessage(data)).await;
-                        }
-                        None => {
-                            let _ = event_tx_clone
-                                .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
-                                .await;
-                        }
-                    }
-                }
-            }
-            NetworkCommand::CreateRoom { username } => {
-                let room_id = net_state.next_room_id();
-                let room = Room::new(room_id, username.clone());
-                let _ = net_state.rooms.lock().await.insert(room_id, room.clone());
-                let _ = event_tx_clone
-                    .send(NetworkEvent::RoomCreated { room })
-                    .await;
-            }
-            NetworkCommand::JoinRoom { client_id, room_id } => {
-                let mut rooms_lock = rooms.lock().await;
-                for (id, room) in rooms_lock.iter_mut() {
-                    if *id == room_id {
-                        room.add_member(client_id);
-                    }
-                }
-                let _ = event_tx_clone
-                    .send(NetworkEvent::JoinedRoom { client_id, room_id })
-                    .await;
-            }
-        }
-    }
     Ok(())
 }

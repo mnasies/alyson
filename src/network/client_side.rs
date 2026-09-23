@@ -12,29 +12,37 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub async fn run_client(
     event_tx: Sender<NetworkEvent>,
     mut cmd_rx: Receiver<NetworkCommand>,
-    server_port: u16,
+    server_addr: &str,
 ) -> Result<(), WireError> {
     let client_state = Arc::new(Mutex::new(ClientState::default(event_tx).await));
 
     // Handle UI commands
-    let client_state_lock = client_state.lock().await;
-    let clients = Arc::clone(&client_state_lock.clients);
-    let rooms = Arc::clone(&client_state_lock.rooms);
-    let event_tx_clone = client_state_lock.event_tx.clone();
+    let (clients, rooms) = {
+        let client_state_lock = client_state.lock().await;
+        (
+            Arc::clone(&client_state_lock.clients),
+            Arc::clone(&client_state_lock.rooms),
+        )
+    };
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             NetworkCommand::SpawnClient { username } => {
                 let client_state_clone = Arc::clone(&client_state);
+                let event_tx_clone = event_tx.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        spawn_client_task(username, server_port, client_state_clone).await
+                        spawn_client_task(username, server_addr, client_state_clone).await
                     {
                         let _ = event_tx_clone.send(NetworkEvent::ErrorOccurred(e)).await;
                     }
                 });
             }
             NetworkCommand::SendMessage { data } => {
-                let client = client_state_lock.client;
+                let client = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock.client.clone()
+                };
+                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::ChatMessage(data)).await;
@@ -47,7 +55,11 @@ pub async fn run_client(
                 }
             }
             NetworkCommand::CreateRoom { username } => {
-                let client = client_state_lock.client;
+                let client = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock.client.clone()
+                };
+                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::CreateRoom { username }).await;
@@ -58,19 +70,13 @@ pub async fn run_client(
                             .await;
                     }
                 }
-                // let room_id = client_state.next_room_id();
-                // let room = Room::new(room_id, username.clone());
-                // let _ = client_state
-                //     .rooms
-                //     .lock()
-                //     .await
-                //     .insert(room_id, room.clone());
-                // let _ = event_tx_clone
-                //     .send(NetworkEvent::RoomCreated { room })
-                //     .await;
             }
             NetworkCommand::JoinRoom { client_id, room_id } => {
-                let client = client_state_lock.client;
+                let client = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock.client.clone()
+                };
+                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::JoinRoom { client_id, room_id }).await;
@@ -90,7 +96,7 @@ pub async fn run_client(
 // Client Side Handling
 pub async fn spawn_client_task(
     username: String,
-    server_port: u16,
+    server_addr: &str,
     client_state: Arc<Mutex<ClientState>>,
 ) -> Result<Client, WireError> {
     use AsyncWriteExt;
@@ -99,7 +105,7 @@ pub async fn spawn_client_task(
     let clients = Arc::clone(&client_state.clients);
     let event_tx = client_state.event_tx.clone();
 
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server_port)).await?;
+    let mut stream = TcpStream::connect(server_addr).await?;
 
     // Handshake: write username
     let handshake_msg = format!("{}\n", username);

@@ -35,8 +35,7 @@ async fn main() -> Result<(), WireError> {
                 .get(2)
                 .cloned()
                 .expect("usage: client connect <ip>:<port>");
-            let int_addr: u16 = addr.parse().map_err(|_| WireError::InvalidArgs)?;
-            tokio::spawn(run_client(event_tx, cmd_rx, int_addr));
+            tokio::spawn(run_client(event_tx, cmd_rx, addr.as_str()));
         }
         _ => {
             // dev mode: this process spawns BOTH the server task and a client task,
