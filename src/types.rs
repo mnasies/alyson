@@ -1,6 +1,8 @@
+use crate::WireError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::SystemTime;
+use tokio::sync::mpsc::Sender;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClientInfo {
@@ -10,16 +12,35 @@ pub struct ClientInfo {
     pub port: u16,
 }
 
+impl ClientInfo {
+    pub fn new(id: u64, username: String, ip: String, port: u16) -> Self {
+        ClientInfo {
+            id,
+            username,
+            ip,
+            port,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum WireMessage {
+pub enum ClientRequest {
+    CreateRoom { username: String },
+    JoinRoom { client_id: u64, room_id: u64 },
+    ChatMessage(InboxEntry),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ServerEvent {
     Welcome { id: usize },
     Roster(Vec<ClientInfo>),
     PeerJoined(ClientInfo),
-    ClientDisconnected(usize),
+    ClientDisconnected(u64),
     PeerLeft(usize),
     ChatMessage(InboxEntry),
     RoomCreated(Room),
     RoomJoined(Room),
+    Error(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -53,8 +74,8 @@ impl std::fmt::Display for InboxEntry {
 pub struct Client {
     pub id: u64,
     pub username: String,
-    pub cmd_tx: Option<tokio::sync::mpsc::Sender<WireMessage>>,
-    pub writer: tokio::sync::mpsc::Sender<WireMessage>,
+    pub cmd_tx: Option<Sender<WireMessage>>,
+    pub writer: Option<Sender<WireMessage>>,
     pub ip: String,
     pub port: u16,
 }
@@ -63,8 +84,8 @@ impl Client {
     pub fn new(
         id: u64,
         username: String,
-        cmd_tx: Option<tokio::sync::mpsc::Sender<WireMessage>>,
-        writer: tokio::sync::mpsc::Sender<WireMessage>,
+        cmd_tx: Option<Sender<WireMessage>>,
+        writer: Option<Sender<WireMessage>>,
         ip: String,
         port: u16,
     ) -> Self {

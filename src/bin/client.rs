@@ -1,5 +1,7 @@
 use alyson::WireError;
+use alyson::network::client_side::run_client;
 use alyson::network::{NetworkHandle, run_network_engine};
+
 use alyson::ui::run;
 use crossterm::{
     execute,
@@ -8,6 +10,8 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use tokio::sync::mpsc;
+
+use std::env;
 
 fn reset_terminal() {
     use std::io::Write;
@@ -19,6 +23,27 @@ fn reset_terminal() {
 
 #[tokio::main]
 async fn main() -> Result<(), WireError> {
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
+    // --- channels setup ---
+    let (cmd_tx, cmd_rx) = mpsc::channel(100);
+    let (event_tx, event_rx) = mpsc::channel(100);
+
+    match args.get(1).map(String::as_str) {
+        Some("connect") => {
+            let addr = args
+                .get(2)
+                .cloned()
+                .expect("usage: client connect <ip>:<port>");
+            let int_addr: u16 = addr.parse().map_err(|_| WireError::InvalidArgs)?;
+            tokio::spawn(run_client(event_tx, cmd_rx, int_addr));
+        }
+        _ => {
+            // dev mode: this process spawns BOTH the server task and a client task,
+            tokio::spawn(run_network_engine(cmd_rx, event_tx));
+        }
+    }
+
     // --- panic hook setup to prevent breaking terminal on panic ---
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -28,15 +53,7 @@ async fn main() -> Result<(), WireError> {
         std::process::exit(1);
     }));
 
-    // --- channels setup ---
-    let (cmd_tx, cmd_rx) = mpsc::channel(100);
-    let (event_tx, event_rx) = mpsc::channel(100);
-
     let net_handle = NetworkHandle::new(cmd_tx);
-
-    // --- run network engine ---
-    tokio::spawn(run_network_engine(cmd_rx, event_tx));
-
     // --- terminal setup ---
     enable_raw_mode()?;
     let mut stdout = stdout();
