@@ -95,25 +95,15 @@ pub async fn run(
         // Check for network events
         while let Ok(event) = event_rx.try_recv() {
             match event {
-                NetworkEvent::ClientConnected {
-                    id,
-                    username,
-                    ip,
-                    port,
-                } => {
-                    main_app.clients.push(app::ClientSummary {
-                        id: id as usize,
-                        name: username,
-                        ip,
-                        port,
-                    });
+                NetworkEvent::ClientConnected(client_info) => {
+                    main_app.clients.push(client_info);
                 }
                 NetworkEvent::ClientDisconnected { id } => {
-                    main_app.clients.retain(|c| c.id != id as usize);
+                    main_app.clients.retain(|c| c.id != id);
                     if let DashBoardView::ClientView(v_id, app::CurrentWindow::ActionList) =
                         main_app.dashboard_view
                     {
-                        if v_id == id as usize {
+                        if v_id == id {
                             main_app.dashboard_view = DashBoardView::Idle;
                         }
                     }

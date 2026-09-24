@@ -12,9 +12,9 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub async fn run_client(
     event_tx: Sender<NetworkEvent>,
     mut cmd_rx: Receiver<NetworkCommand>,
-    server_addr: &str,
+    server_addr: String,
 ) -> Result<(), WireError> {
-    let client_state = Arc::new(Mutex::new(ClientState::default(event_tx).await));
+    let client_state = Arc::new(Mutex::new(ClientState::default(event_tx.clone()).await));
 
     // Handle UI commands
     let (clients, rooms) = {
@@ -28,10 +28,11 @@ pub async fn run_client(
         match cmd {
             NetworkCommand::SpawnClient { username } => {
                 let client_state_clone = Arc::clone(&client_state);
+                let server_addr_clone = server_addr.clone();
                 let event_tx_clone = event_tx.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        spawn_client_task(username, server_addr, client_state_clone).await
+                        spawn_client_task(username, server_addr_clone, client_state_clone).await
                     {
                         let _ = event_tx_clone.send(NetworkEvent::ErrorOccurred(e)).await;
                     }
@@ -42,13 +43,12 @@ pub async fn run_client(
                     let client_state_lock = client_state.lock().await;
                     client_state_lock.client.clone()
                 };
-                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::ChatMessage(data)).await;
                     }
                     None => {
-                        let _ = event_tx_clone
+                        let _ = event_tx
                             .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
                             .await;
                     }
@@ -59,13 +59,12 @@ pub async fn run_client(
                     let client_state_lock = client_state.lock().await;
                     client_state_lock.client.clone()
                 };
-                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::CreateRoom { username }).await;
                     }
                     None => {
-                        let _ = event_tx_clone
+                        let _ = event_tx
                             .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
                             .await;
                     }
@@ -76,13 +75,12 @@ pub async fn run_client(
                     let client_state_lock = client_state.lock().await;
                     client_state_lock.client.clone()
                 };
-                let event_tx_clone = event_tx.clone();
                 match &client.cmd_tx {
                     Some(m) => {
                         let _ = m.send(ClientRequest::JoinRoom { client_id, room_id }).await;
                     }
                     None => {
-                        let _ = event_tx_clone
+                        let _ = event_tx
                             .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
                             .await;
                     }
@@ -96,7 +94,7 @@ pub async fn run_client(
 // Client Side Handling
 pub async fn spawn_client_task(
     username: String,
-    server_addr: &str,
+    server_addr: String,
     client_state: Arc<Mutex<ClientState>>,
 ) -> Result<Client, WireError> {
     use AsyncWriteExt;

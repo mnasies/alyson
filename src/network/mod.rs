@@ -1,9 +1,9 @@
 pub mod client_side;
 use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room, ServerEvent};
-use client_side::{run_client, spawn_client_task};
+use client_side::run_client;
 
 pub mod server_side;
-use server_side::{handle_incoming_connection, run_server};
+use server_side::run_server;
 
 pub mod framing;
 
@@ -12,7 +12,6 @@ use crate::WireError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic;
-use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -117,9 +116,9 @@ impl ClientState {
     pub async fn new(
         id: u64,
         username: String,
-        cmd_tx: Option<Sender<WireMessage>>,
+        cmd_tx: Option<Sender<ClientRequest>>,
         event_tx: Sender<NetworkEvent>,
-        writer: Option<Sender<WireMessage>>,
+        writer: Option<Sender<ServerEvent>>,
         ip: String,
         port: u16,
     ) -> Self {

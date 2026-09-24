@@ -74,7 +74,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
     };
 }
 
-fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
+fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: u64) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -82,19 +82,19 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
             Constraint::Percentage(80), // options list, takes remaining space
         ])
         .split(canvas);
-    let client_name = match app.clients.iter().find(|c| c.id == id) {
-        Some(c) => c.name.clone(),
+    let client_name = match app.clients.iter().find(|c| c.id == id as u64) {
+        Some(c) => c.username.clone(),
         None => "Unknown client".to_string(),
     };
     let upper_block = Block::default()
         .title(client_name.clone())
         .borders(Borders::ALL);
 
-    let ip = match app.clients.iter().find(|c| c.id == id) {
+    let ip = match app.clients.iter().find(|c| c.id == id as u64) {
         Some(c) => c.ip.clone(),
         None => "Unknown IP".to_string(),
     };
-    let port = match app.clients.iter().find(|c| c.id == id) {
+    let port = match app.clients.iter().find(|c| c.id == id as u64) {
         Some(c) => c.port,
         None => 0,
     };
@@ -163,7 +163,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
             let style = match app.selected.inbox_cli_selected {
                 Some(n) => {
                     if i == n {
-                        app.current_clients.1 = Some(cli.id as usize);
+                        app.current_clients.1 = Some(cli.id);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -171,7 +171,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 }
                 None => Style::default(),
             };
-            let line = Line::from(cli.name.clone()).alignment(Alignment::Left);
+            let line = Line::from(cli.username.clone()).alignment(Alignment::Left);
             ListItem::new(line).style(style)
         })
         .collect();
@@ -278,7 +278,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
             let style = match app.selected.room_list_selected {
                 Some(n) => {
                     if i == n {
-                        app.current_room = Some(room.id as usize);
+                        app.current_room = Some(room.id);
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::default()
@@ -409,7 +409,7 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 }
                 None => Style::default(),
             };
-            ListItem::new(cli.name.clone()).style(style)
+            ListItem::new(cli.username.clone()).style(style)
         })
         .collect();
     let list = List::new(client_list).block(block_right);

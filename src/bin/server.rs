@@ -11,7 +11,13 @@ async fn main() -> Result<(), WireError> {
                 Some(addr) => addr,
                 None => "127.0.0.1:0".to_string(),
             };
-            tokio::spawn(run_server(addr.as_str()));
+            tokio::spawn(match run_server(addr.as_str()) {
+                Ok(addr) => {
+                    println!("Server started on {}", addr);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            });
         }
         _ => {
             panic!("unknown command: Usage `-- serve [addr]`");

@@ -1,4 +1,3 @@
-use crate::WireError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::SystemTime;
@@ -74,8 +73,8 @@ impl std::fmt::Display for InboxEntry {
 pub struct Client {
     pub id: u64,
     pub username: String,
-    pub cmd_tx: Option<Sender<WireMessage>>,
-    pub writer: Option<Sender<WireMessage>>,
+    pub cmd_tx: Option<Sender<ClientRequest>>,
+    pub writer: Option<Sender<ServerEvent>>,
     pub ip: String,
     pub port: u16,
 }
@@ -84,8 +83,8 @@ impl Client {
     pub fn new(
         id: u64,
         username: String,
-        cmd_tx: Option<Sender<WireMessage>>,
-        writer: Option<Sender<WireMessage>>,
+        cmd_tx: Option<Sender<ClientRequest>>,
+        writer: Option<Sender<ServerEvent>>,
         ip: String,
         port: u16,
     ) -> Self {

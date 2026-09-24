@@ -40,7 +40,7 @@ pub async fn run_server(addr: &str) -> Result<String, WireError> {
                         let _ = handle_incoming_connection(stream, server_state_inner).await;
                     });
                 }
-                Err(e) => {}
+                Err(_) => {}
             }
         }
     });
@@ -144,14 +144,17 @@ pub async fn handle_incoming_connection(
                     let rooms_lock = rooms_reader_clone.lock().await;
                     if entry.cli_or_room {
                         if let Some(client) = clients_lock.get(&entry.to) {
-                            let _ = client.writer.send(ServerEvent::ChatMessage(entry)).await;
+                            if let Some(writer) = client.writer {
+                                let _ = writer.send(ServerEvent::ChatMessage(entry)).await;
+                            }
                         }
                     } else {
                         if let Some(room) = rooms_lock.get(&entry.to) {
                             for cli_id in room.members.iter() {
                                 if let Some(client) = clients_lock.get(cli_id) {
-                                    let _ =
-                                        client.writer.send(ServerEvent::ChatMessage(entry)).await;
+                                    if let Some(writer) = client.writer {
+                                        let _ = writer.send(ServerEvent::ChatMessage(entry)).await;
+                                    }
                                 }
                             }
                         }
