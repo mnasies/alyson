@@ -3,26 +3,56 @@ pub mod types;
 pub mod ui;
 
 use std::sync::Arc;
+use thiserror::Error;
 
 pub const MIN_WIDTH: u16 = 80;
 pub const MIN_HEIGHT: u16 = 20;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum WireError {
+    #[error("io error: {0}")]
     Io(Arc<std::io::Error>),
+
+    #[error("invalid name")]
     InvalidName,
+
+    #[error("handshake failed: {0}")]
     HandshakeFailed(String),
+
+    #[error("TCP connection failed: {0}")]
     TcpConnectionFailed(Arc<std::io::Error>),
+
+    #[error("disconnected")]
     Disconnected,
+
+    #[error("port not available")]
     PortNotAvailable,
+
+    #[error("client registration timeout")]
     ClientRegistrationTimeout,
+
+    #[error("serialization failed")]
     SerializationFailed,
+
+    #[error("payload too large")]
     PayloadTooLarge,
+
+    #[error("channel not found")]
     ChannelNotFound,
+
+    #[error("sender not found")]
     SenderNotFound,
+
+    #[error("receiver not found")]
     ReceiverNotFound,
+
+    #[error("client not found")]
     ClientNotFound,
+
+    #[error("channel failure")]
     ChannelFailure,
+
+    #[error("invalid args")]
     InvalidArgs,
 }
 
@@ -31,27 +61,3 @@ impl From<std::io::Error> for WireError {
         WireError::Io(Arc::new(e))
     }
 }
-
-impl std::fmt::Display for WireError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            WireError::Io(e) => write!(f, "IO error: {e}"),
-            WireError::InvalidName => write!(f, "invalid name"),
-            WireError::HandshakeFailed(s) => write!(f, "handshake failed: {s}"),
-            WireError::Disconnected => write!(f, "client disconnected"),
-            WireError::PortNotAvailable => write!(f, "port not available"),
-            WireError::ClientNotFound => write!(f, "client not found"),
-            WireError::InvalidArgs => write!(f, "invalid arguments"),
-            WireError::TcpConnectionFailed(e) => write!(f, "TCP connection failed: {e}"),
-            WireError::ChannelNotFound => write!(f, "channel not found"),
-            WireError::PayloadTooLarge => write!(f, "payload too large"),
-            WireError::SerializationFailed => write!(f, "serialization failed"),
-            WireError::ClientRegistrationTimeout => write!(f, "client registration timeout"),
-            WireError::SenderNotFound => write!(f, "sender not found"),
-            WireError::ReceiverNotFound => write!(f, "receiver not found"),
-            WireError::ChannelFailure => write!(f, "mpsc channel failued to transfer data"),
-        }
-    }
-}
-
-impl std::error::Error for WireError {}

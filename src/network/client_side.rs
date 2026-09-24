@@ -1,6 +1,6 @@
 use crate::WireError;
 use crate::network::{ClientState, NetworkCommand, NetworkEvent, framing};
-use crate::types::{Client, ClientRequest, InboxEntry, ServerEvent};
+use crate::types::{Client, ClientRequest, ServerEvent};
 
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -101,9 +101,13 @@ pub async fn spawn_client_task(
 ) -> Result<Client, WireError> {
     use AsyncWriteExt;
 
-    let client_state = client_state.lock().await;
-    let clients = Arc::clone(&client_state.clients);
-    let event_tx = client_state.event_tx.clone();
+    let (clients, event_tx) = {
+        let client_state = client_state.lock().await;
+        (
+            Arc::clone(&client_state.clients),
+            client_state.event_tx.clone(),
+        )
+    };
 
     let mut stream = TcpStream::connect(server_addr).await?;
 
@@ -156,6 +160,36 @@ pub async fn spawn_client_task(
                         return;
                     }
                 }
+                ServerEvent::PeerJoined(client_info) => {
+                    if event_tx_entry
+                        .send(NetworkEvent::ClientConnected(client_info))
+                        .await
+                        .is_err()
+                    {
+                        // Channel receiver was dropped (UI closed/shutdown)
+                        return;
+                    }
+                }
+                ServerEvent::Roster(clients) => {
+                    for client in clients {
+                        if event_tx_entry
+                            .send(NetworkEvent::ClientConnected(client))
+                            .await
+                            .is_err()
+                        {
+                            // Channel receiver was dropped (UI closed/shutdown)
+                            return;
+                        }
+                    }
+                }
+                ServerEvent::ClientDisconnected(id) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ClientDisconnected { id })
+                        .await;
+                }
+                // ServerEvent::Error(err) => {
+                //     let _ = event_tx_entry.send(NetworkEvent::ErrorOccurred(err)).await;
+                // }
                 _ => {}
             }
         };

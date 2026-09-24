@@ -82,6 +82,7 @@ pub async fn handle_incoming_connection(
     // Create server communication channel
     let (write_tx, write_rx) = tokio::sync::mpsc::channel::<ServerEvent>(32);
 
+    // Create the new client
     let client = Client::new(
         client_id,
         username.clone(),
@@ -93,7 +94,7 @@ pub async fn handle_incoming_connection(
 
     let client_info = ClientInfo::new(client_id, username.clone(), ip.clone(), port);
 
-    // Send the Client ID to the client as part of the handshake protocol
+    // Send the Client ID back to the client as part of the handshake protocol
     writer.write_all(&client_id.to_string().as_bytes()).await?;
     {
         let mut lock = clients.lock().await;
@@ -109,6 +110,23 @@ pub async fn handle_incoming_connection(
             .send(ServerEvent::PeerJoined(client_info.clone()))
             .await;
     }
+
+    // Notify to the new client the list of all existing clients
+    let roster: Vec<ClientInfo> = Vec::new();
+    for (_, client) in clients.lock().await.iter() {
+        roster.push(ClientInfo::new(
+            client.id,
+            client.username.clone(),
+            client.ip.clone(),
+            client.port,
+        ));
+    }
+    if let Some(writer) = client.writer {
+        let _ = writer.send(ServerEvent::Roster(roster)).await;
+    }
+
+    // push the new client to the clients list
+    clients.lock().await.insert(client_id, client.clone());
 
     // Server-side reader task of a Client
     let clients_reader = Arc::clone(&clients);
