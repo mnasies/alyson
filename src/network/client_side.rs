@@ -1,6 +1,6 @@
 use crate::WireError;
 use crate::network::{ClientState, NetworkCommand, NetworkEvent, framing};
-use crate::types::{Client, ClientRequest, ServerEvent};
+use crate::types::{Client, ClientInfo, ClientRequest, ServerEvent};
 
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -16,14 +16,15 @@ pub async fn run_client(
 ) -> Result<(), WireError> {
     let client_state = Arc::new(Mutex::new(ClientState::default(event_tx.clone()).await));
 
+    // let (clients, rooms) = {
+    //     let client_state_lock = client_state.lock().await;
+    //     (
+    //         Arc::clone(&client_state_lock.clients),
+    //         Arc::clone(&client_state_lock.rooms),
+    //     )
+    // };
+
     // Handle UI commands
-    let (clients, rooms) = {
-        let client_state_lock = client_state.lock().await;
-        (
-            Arc::clone(&client_state_lock.clients),
-            Arc::clone(&client_state_lock.rooms),
-        )
-    };
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             NetworkCommand::SpawnClient { username } => {
@@ -108,17 +109,34 @@ pub async fn spawn_client_task(
     };
 
     let mut stream = TcpStream::connect(server_addr).await?;
+    let ip = stream.peer_addr()?.ip().to_string();
+    let port = stream.peer_addr()?.port();
 
     // Handshake: write username
     let handshake_msg = format!("{}\n", username);
     stream.write_all(handshake_msg.as_bytes()).await?;
 
-    // Resolve client ID by reading the first line of the response
+    // Resolve client ID by reading the first line of the server response
     let (read_half, writer) = stream.into_split();
     let mut reader = BufReader::new(read_half);
     let mut client_id = String::new();
     reader.read_line(&mut client_id).await?;
     let client_id: u64 = client_id.trim().parse().unwrap();
+
+    // Send the client ID back to the UI side
+    event_tx
+        .send(NetworkEvent::MyClient { id: client_id })
+        .await
+        .map_err(|_| WireError::ChannelNotFound)?;
+
+    // Add the client to the clients list
+    {
+        let mut lock = clients.lock().await;
+        lock.insert(
+            client_id,
+            ClientInfo::new(client_id, username.clone(), ip, port),
+        );
+    }
 
     // Create client writer channel
     let (cmd_tx, cmd_rx) = mpsc::channel::<ClientRequest>(32);

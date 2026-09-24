@@ -4,7 +4,7 @@ pub mod ui;
 
 use crate::WireError;
 use crate::network::{NetworkEvent, NetworkHandle};
-pub use app::{App, DashBoardView, Focus, InputResult};
+pub use app::{App, DashBoardView, Focus, IdentityMode, InputResult};
 use std::time::{Duration, Instant};
 use ui::{draw_error_toast, ui};
 
@@ -19,8 +19,23 @@ pub async fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     net_handle: NetworkHandle,
     mut event_rx: Receiver<NetworkEvent>,
+    identity_mode: u8,
+    client_name: String,
 ) -> Result<(), WireError> {
     let mut main_app = App::new();
+    if identity_mode == 1 {
+        main_app.screen = app::Screen::Dashboard;
+        let _ = net_handle.spawn_client(client_name);
+
+        // Wait for the network to assign an ID to the client
+        if let Some(NetworkEvent::MyClient { id }) = event_rx.recv().await {
+            main_app.identity_mode = IdentityMode::Fixed(Some(id));
+        } else {
+            main_app.identity_mode = IdentityMode::Default;
+        }
+    } else {
+        main_app.identity_mode = IdentityMode::Default;
+    }
 
     loop {
         // Clean up old errors
@@ -95,6 +110,7 @@ pub async fn run(
         // Check for network events
         while let Ok(event) = event_rx.try_recv() {
             match event {
+                NetworkEvent::MyClient { id: _ } => {}
                 NetworkEvent::ClientConnected(client_info) => {
                     main_app.clients.push(client_info);
                 }
@@ -213,24 +229,28 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 }
             }
             KeyCode::Down => {
+                let n = match main_app.identity_mode {
+                    IdentityMode::Default => 1,
+                    IdentityMode::Fixed(_) => 0,
+                };
                 let cli_opt = match main_app.selected.cli_opt_selected {
                     Some(n) => n,
                     None => 0,
                 };
-                if cli_opt < 1 {
+                if cli_opt < n {
                     main_app.selected.cli_opt_selected = Some(cli_opt + 1);
                 }
             }
             KeyCode::Enter => match main_app.selected.cli_opt_selected {
                 Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
-                    main_app.buf.new_client_name.clear();
-                    main_app.action_state = app::ActionState::None;
+                    main_app.buf.new_room_name.clear();
+                    main_app.action_state = app::ActionState::CreateChatRoom;
                 }
                 Some(1) => {
                     main_app.input_mode = app::InputMode::Typing;
-                    main_app.buf.new_room_name.clear();
-                    main_app.action_state = app::ActionState::CreateChatRoom;
+                    main_app.buf.new_client_name.clear();
+                    main_app.action_state = app::ActionState::None;
                 }
                 _ => {}
             },

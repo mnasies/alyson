@@ -55,7 +55,7 @@ pub enum Focus {
 
 pub enum IdentityMode {
     Default,
-    Fixed(usize),
+    Fixed(Option<u64>),
 }
 
 pub struct AppBuf {

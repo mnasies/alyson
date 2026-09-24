@@ -28,18 +28,27 @@ async fn main() -> Result<(), WireError> {
     // --- channels setup ---
     let (cmd_tx, cmd_rx) = mpsc::channel(100);
     let (event_tx, event_rx) = mpsc::channel(100);
+    let identity_mode; // 0: random, 1: fixed
+    let mut client_name = String::new();
 
     match args.get(1).map(String::as_str) {
         Some("connect") => {
             let addr = args
                 .get(2)
                 .cloned()
-                .expect("usage: client connect <ip>:<port>");
-            tokio::spawn(run_client(event_tx, cmd_rx, addr.as_str()));
+                .expect("usage: client connect <ip>:<port> --name <name>");
+            let name_idx = args.iter().position(|a| a == "--name");
+            client_name = name_idx
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+                .expect("--name <name> is required for connect mode");
+            tokio::spawn(run_client(event_tx, cmd_rx, addr));
+            identity_mode = 1;
         }
         _ => {
             // dev mode: this process spawns BOTH the server task and a client task,
             tokio::spawn(run_network_engine(cmd_rx, event_tx));
+            identity_mode = 0;
         }
     }
 
@@ -61,7 +70,14 @@ async fn main() -> Result<(), WireError> {
     let mut terminal = Terminal::new(backend)?;
 
     // --- run ui ---
-    let result = run(&mut terminal, net_handle, event_rx).await;
+    let result = run(
+        &mut terminal,
+        net_handle,
+        event_rx,
+        identity_mode,
+        client_name,
+    )
+    .await;
 
     // --- teardown ---
     reset_terminal();

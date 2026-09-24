@@ -2,16 +2,15 @@ pub mod client_side;
 use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room, ServerEvent};
 use client_side::run_client;
 
-pub mod server_side;
-use server_side::run_server;
-
 pub mod framing;
+pub mod server_side;
 
 use crate::WireError;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic;
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -30,6 +29,7 @@ pub enum NetworkEvent {
     RoomCreated { room: Room },
     JoinedRoom { client_id: u64, room_id: u64 },
     MessageReceived(InboxEntry),
+    MyClient { id: u64 },
     ErrorOccurred(WireError),
 }
 
@@ -151,17 +151,36 @@ pub async fn run_network_engine(
     cmd_rx: Receiver<NetworkCommand>,
     event_tx: Sender<NetworkEvent>,
 ) -> Result<(), WireError> {
-    let server_addr = match run_server("127.0.0.1:0").await {
-        Ok(addr) => addr,
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
+        Ok(l) => l,
         Err(e) => {
             panic!(
-                "fatal: could not run server ({}). The network engine cannot start.",
+                "fatal: could not bind TCP listener ({}). The network engine cannot start.",
                 e
             );
         }
     };
+    let server_addr = match listener.local_addr() {
+        Ok(addr) => addr.to_string(),
+        Err(e) => {
+            panic!(
+                "fatal: could not read local addr of TCP listener ({}). The network engine cannot start.",
+                e
+            );
+        }
+    };
+    println!("Server started on {}", server_addr.clone());
+    // Map of active client connections on the server side
+    let server_state = Arc::new(ServerState::new().await);
 
-    run_client(event_tx, cmd_rx, server_addr.as_str()).await?;
+    // Spawn the server accept loop
+    let server_state_clone = Arc::clone(&server_state);
+    // Server-side task that accepts incoming connections
+    tokio::spawn(async move {
+        server_side::accept_loop(listener, server_state_clone).await;
+    });
+
+    run_client(event_tx, cmd_rx, server_addr).await?;
 
     Ok(())
 }

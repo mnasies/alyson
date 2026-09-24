@@ -1,5 +1,7 @@
-use alyson::WireError;
+// use alyson::WireError;
 use alyson::network::{NetworkHandle, run_network_engine};
+
+use alyson::WireError;
 use alyson::ui::run;
 use crossterm::{
     execute,
@@ -19,6 +21,15 @@ fn reset_terminal() {
 
 #[tokio::main]
 async fn main() -> Result<(), WireError> {
+    // --- channels setup ---
+    let (cmd_tx, cmd_rx) = mpsc::channel(100);
+    let (event_tx, event_rx) = mpsc::channel(100);
+    let identity_mode = 0; // 0: default, 1: fixed
+    let client_name = String::new();
+
+    // dev mode: this process spawns BOTH the server task and a client task,
+    tokio::spawn(run_network_engine(cmd_rx, event_tx));
+
     // --- panic hook setup to prevent breaking terminal on panic ---
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
@@ -28,15 +39,7 @@ async fn main() -> Result<(), WireError> {
         std::process::exit(1);
     }));
 
-    // --- channels setup ---
-    let (cmd_tx, cmd_rx) = mpsc::channel(100);
-    let (event_tx, event_rx) = mpsc::channel(100);
-
     let net_handle = NetworkHandle::new(cmd_tx);
-
-    // --- run network engine ---
-    tokio::spawn(run_network_engine(cmd_rx, event_tx));
-
     // --- terminal setup ---
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -45,7 +48,14 @@ async fn main() -> Result<(), WireError> {
     let mut terminal = Terminal::new(backend)?;
 
     // --- run ui ---
-    let result = run(&mut terminal, net_handle, event_rx).await;
+    let result = run(
+        &mut terminal,
+        net_handle,
+        event_rx,
+        identity_mode,
+        client_name,
+    )
+    .await;
 
     // --- teardown ---
     reset_terminal();

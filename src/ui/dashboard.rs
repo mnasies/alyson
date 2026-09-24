@@ -1,6 +1,6 @@
 use crate::types::InboxEntry;
 use crate::ui::app;
-use crate::ui::app::{ActionState, App};
+use crate::ui::app::{ActionState, App, IdentityMode};
 
 use ratatui::{
     Frame,
@@ -393,8 +393,27 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(canvas);
+    let clients;
+    let options;
+    match app.identity_mode {
+        IdentityMode::Fixed(Some(id)) => {
+            clients = app
+                .clients
+                .iter()
+                .filter(|cli| cli.id == id)
+                .cloned()
+                .collect();
+            options = vec![String::from("Create New Chat Room")];
+        }
+        IdentityMode::Default | IdentityMode::Fixed(None) => {
+            clients = app.clients.clone();
+            options = vec![
+                String::from("Create New Chat Room"),
+                String::from("Create New Client"),
+            ];
+        }
+    }
 
-    let clients = &app.clients;
     let client_list: Vec<ListItem> = clients
         .iter()
         .enumerate()
@@ -416,10 +435,6 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
 
     frame.render_widget(list, chunks[0]);
 
-    let options = vec![
-        String::from("New Client"),
-        String::from("Create New Chat Room"),
-    ];
     let cli_opt_list: Vec<ListItem> = options
         .iter()
         .enumerate()

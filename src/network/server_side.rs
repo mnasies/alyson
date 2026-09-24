@@ -5,8 +5,22 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
+pub async fn accept_loop(listener: TcpListener, server_state: Arc<ServerState>) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let server_state_inner = Arc::clone(&server_state);
+                tokio::spawn(async move {
+                    let _ = handle_incoming_connection(stream, server_state_inner).await;
+                });
+            }
+            Err(_) => {}
+        }
+    }
+}
+
 // main server loop
-pub async fn run_server(addr: &str) -> Result<String, WireError> {
+pub async fn run_server(addr: String) -> Result<String, WireError> {
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -25,25 +39,14 @@ pub async fn run_server(addr: &str) -> Result<String, WireError> {
             );
         }
     };
+    println!("Server started on {}", server_addr.clone());
     // Map of active client connections on the server side
     let server_state = Arc::new(ServerState::new().await);
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
     // Server-side task that accepts incoming connections
-    tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let server_state_inner = Arc::clone(&server_state_clone);
-                    tokio::spawn(async move {
-                        let _ = handle_incoming_connection(stream, server_state_inner).await;
-                    });
-                }
-                Err(_) => {}
-            }
-        }
-    });
+    accept_loop(listener, server_state_clone).await;
     Ok(server_addr)
 }
 
@@ -95,7 +98,8 @@ pub async fn handle_incoming_connection(
     let client_info = ClientInfo::new(client_id, username.clone(), ip.clone(), port);
 
     // Send the Client ID back to the client as part of the handshake protocol
-    writer.write_all(&client_id.to_string().as_bytes()).await?;
+    let msg = format!("{}\n", client_id);
+    writer.write_all(msg.as_bytes()).await?;
     {
         let mut lock = clients.lock().await;
         lock.insert(client_id, client.clone());
@@ -103,7 +107,7 @@ pub async fn handle_incoming_connection(
 
     // Notify all clients of the new connection
     for (_, client) in clients.lock().await.iter() {
-        let Some(writer) = client.writer else {
+        let Some(writer) = &client.writer else {
             continue;
         };
         let _ = writer
@@ -112,7 +116,7 @@ pub async fn handle_incoming_connection(
     }
 
     // Notify to the new client the list of all existing clients
-    let roster: Vec<ClientInfo> = Vec::new();
+    let mut roster: Vec<ClientInfo> = Vec::new();
     for (_, client) in clients.lock().await.iter() {
         roster.push(ClientInfo::new(
             client.id,
@@ -121,7 +125,7 @@ pub async fn handle_incoming_connection(
             client.port,
         ));
     }
-    if let Some(writer) = client.writer {
+    if let Some(writer) = &client.writer {
         let _ = writer.send(ServerEvent::Roster(roster)).await;
     }
 
@@ -144,7 +148,7 @@ pub async fn handle_incoming_connection(
                     let rooms_lock = rooms_reader_clone.lock().await;
                     if entry.cli_or_room {
                         if let Some(client) = clients_lock.get(&entry.to) {
-                            if let Some(writer) = client.writer {
+                            if let Some(writer) = &client.writer {
                                 let _ = writer.send(ServerEvent::ChatMessage(entry)).await;
                             }
                         }
@@ -152,8 +156,10 @@ pub async fn handle_incoming_connection(
                         if let Some(room) = rooms_lock.get(&entry.to) {
                             for cli_id in room.members.iter() {
                                 if let Some(client) = clients_lock.get(cli_id) {
-                                    if let Some(writer) = client.writer {
-                                        let _ = writer.send(ServerEvent::ChatMessage(entry)).await;
+                                    if let Some(writer) = &client.writer {
+                                        let _ = writer
+                                            .send(ServerEvent::ChatMessage(entry.clone()))
+                                            .await;
                                     }
                                 }
                             }
@@ -164,12 +170,15 @@ pub async fn handle_incoming_connection(
             }
         };
         let curr_client_er = curr_client_r.clone();
-        let handle_error = async move |err: WireError| match err {
-            e => {
-                let Some(writer) = curr_client_er.writer else {
-                    return;
-                };
-                let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+        let handle_error = async move |err: WireError| {
+            let curr_client = curr_client_er.clone();
+            match err {
+                e => {
+                    let Some(writer) = curr_client.writer else {
+                        return;
+                    };
+                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+                }
             }
         };
         framing::read_framed_loop(reader, handle_entry, handle_error).await;
@@ -191,12 +200,15 @@ pub async fn handle_incoming_connection(
 
     let curr_client_w = client.clone();
     tokio::spawn(async move {
-        let handle_error = async move |err: WireError| match err {
-            e => {
-                let Some(writer) = curr_client_w.writer else {
-                    return;
-                };
-                let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+        let handle_error = async move |err: WireError| {
+            let curr_client = curr_client_w.clone();
+            match err {
+                e => {
+                    let Some(writer) = curr_client.writer else {
+                        return;
+                    };
+                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+                }
             }
         };
         framing::write_framed_loop(writer, write_rx, handle_error).await;
