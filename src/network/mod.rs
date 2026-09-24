@@ -55,9 +55,12 @@ impl NetworkHandle {
             .map_err(|_| WireError::ChannelFailure)
     }
 
-    pub fn create_room(&self, name: String) -> Result<(), WireError> {
+    pub fn create_room(&self, client_id: u64, name: String) -> Result<(), WireError> {
         self.cmd_tx
-            .try_send(NetworkCommand::CreateRoom { username: name })
+            .try_send(NetworkCommand::CreateRoom {
+                client_id,
+                username: name,
+            })
             .map_err(|_| WireError::ChannelFailure)
     }
 

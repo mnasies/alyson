@@ -48,7 +48,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
             }
-            ActionState::CreateChatRoom => {
+            ActionState::CreateChatRoom(_) => {
                 let content = format!("New room name:\n\n{}_", app.buf.new_room_name);
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);

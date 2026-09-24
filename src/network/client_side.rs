@@ -42,7 +42,12 @@ pub async fn run_client(
             NetworkCommand::SendMessage { data } => {
                 let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.senders.lock().await.get(&data.from)
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&data.from)
+                        .cloned()
                 };
                 match &sender {
                     Some(m) => {
@@ -61,7 +66,12 @@ pub async fn run_client(
             } => {
                 let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.senders.lock().await.get(&client_id)
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&client_id)
+                        .cloned()
                 };
                 match &sender {
                     Some(m) => {
@@ -77,7 +87,12 @@ pub async fn run_client(
             NetworkCommand::JoinRoom { client_id, room_id } => {
                 let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.senders.lock().await.get(&client_id)
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&client_id)
+                        .cloned()
                 };
                 match &sender {
                     Some(m) => {

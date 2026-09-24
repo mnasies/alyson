@@ -36,7 +36,7 @@ pub enum CurrentWindow {
 pub enum ActionState {
     SendMessage,
     JoinChatRoom,
-    CreateChatRoom,
+    CreateChatRoom(u64),
     SendMessageToRoom,
     None,
 }
@@ -147,7 +147,7 @@ impl App {
             ActionState::SendMessage | ActionState::SendMessageToRoom => {
                 Some(&mut self.buf.msg_to_client)
             }
-            ActionState::CreateChatRoom => Some(&mut self.buf.new_room_name),
+            ActionState::CreateChatRoom(_) => Some(&mut self.buf.new_room_name),
             _ => None,
         }
     }
@@ -190,12 +190,12 @@ impl App {
                 }
                 self.buf.new_client_name.clear();
             }
-            ActionState::CreateChatRoom => {
+            ActionState::CreateChatRoom(id) => {
                 let name = self.buf.new_room_name.trim().to_string();
                 self.input_mode = InputMode::Selecting;
                 if !name.is_empty() {
                     // actually create the client — network call, next
-                    net_handle.create_room(name)?;
+                    net_handle.create_room(*id, name)?;
                 }
                 self.buf.new_room_name.clear();
             }

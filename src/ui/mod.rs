@@ -114,7 +114,9 @@ pub async fn run(
             match event {
                 NetworkEvent::MyClient { id: _ } => {}
                 NetworkEvent::ClientConnected(client_info) => {
-                    main_app.clients.push(client_info);
+                    if !main_app.clients.iter().any(|c| c.id == client_info.id) {
+                        main_app.clients.push(client_info);
+                    }
                 }
                 NetworkEvent::ClientDisconnected { id } => {
                     main_app.clients.retain(|c| c.id != id);
@@ -247,7 +249,9 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
                     main_app.buf.new_room_name.clear();
-                    main_app.action_state = app::ActionState::CreateChatRoom;
+                    if let Some(id) = main_app.current_clients.0 {
+                        main_app.action_state = app::ActionState::CreateChatRoom(id);
+                    }
                 }
                 Some(1) => {
                     main_app.input_mode = app::InputMode::Typing;
@@ -461,7 +465,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 } else {
                     if let Some(cli_id) = main_app.current_clients.0 {
                         if let Some(room_id) = main_app.current_room {
-                            let _ = net_handle.join_room(cli_id as u64, room_id as u64);
+                            let _ = net_handle.join_room(cli_id, room_id);
                         }
                     }
                 }
