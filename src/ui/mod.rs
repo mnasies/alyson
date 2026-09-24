@@ -33,6 +33,7 @@ pub async fn run(
         } else {
             main_app.identity_mode = IdentityMode::Default;
         }
+        main_app.focus = app::Focus::ClientList;
     } else {
         main_app.identity_mode = IdentityMode::Default;
     }
@@ -109,6 +110,7 @@ pub async fn run(
 
         // Check for network events
         while let Ok(event) = event_rx.try_recv() {
+            eprintln!("ui event: {:?}", event);
             match event {
                 NetworkEvent::MyClient { id: _ } => {}
                 NetworkEvent::ClientConnected(client_info) => {

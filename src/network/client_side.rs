@@ -14,7 +14,7 @@ pub async fn run_client(
     mut cmd_rx: Receiver<NetworkCommand>,
     server_addr: String,
 ) -> Result<(), WireError> {
-    let client_state = Arc::new(Mutex::new(ClientState::default(event_tx.clone()).await));
+    let client_state = Arc::new(Mutex::new(ClientState::new(event_tx.clone()).await));
 
     // let (clients, rooms) = {
     //     let client_state_lock = client_state.lock().await;
@@ -40,11 +40,11 @@ pub async fn run_client(
                 });
             }
             NetworkCommand::SendMessage { data } => {
-                let client = {
+                let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.client.clone()
+                    client_state_lock.senders.lock().await.get(&data.from)
                 };
-                match &client.cmd_tx {
+                match &sender {
                     Some(m) => {
                         let _ = m.send(ClientRequest::ChatMessage(data)).await;
                     }
@@ -55,12 +55,15 @@ pub async fn run_client(
                     }
                 }
             }
-            NetworkCommand::CreateRoom { username } => {
-                let client = {
+            NetworkCommand::CreateRoom {
+                client_id,
+                username,
+            } => {
+                let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.client.clone()
+                    client_state_lock.senders.lock().await.get(&client_id)
                 };
-                match &client.cmd_tx {
+                match &sender {
                     Some(m) => {
                         let _ = m.send(ClientRequest::CreateRoom { username }).await;
                     }
@@ -72,11 +75,11 @@ pub async fn run_client(
                 }
             }
             NetworkCommand::JoinRoom { client_id, room_id } => {
-                let client = {
+                let sender = {
                     let client_state_lock = client_state.lock().await;
-                    client_state_lock.client.clone()
+                    client_state_lock.senders.lock().await.get(&client_id)
                 };
-                match &client.cmd_tx {
+                match &sender {
                     Some(m) => {
                         let _ = m.send(ClientRequest::JoinRoom { client_id, room_id }).await;
                     }
@@ -158,6 +161,18 @@ pub async fn spawn_client_task(
         }
     };
 
+    // Assign the ClientRequest sender
+    {
+        let client_state_lock = client_state.lock().await;
+        if let Some(sender) = client.cmd_tx.clone() {
+            client_state_lock
+                .senders
+                .lock()
+                .await
+                .insert(client_id, sender);
+        }
+    }
+
     let event_tx_reader = event_tx.clone();
 
     // Client-side reader task
@@ -212,6 +227,7 @@ pub async fn spawn_client_task(
         let event_tx_error = event_tx_reader.clone();
         let handle_error = async move |e: WireError| match e {
             e => {
+                eprintln!("client reader error: {:?}", e);
                 let _ = event_tx_error.send(NetworkEvent::ErrorOccurred(e)).await;
             }
         };
@@ -229,6 +245,7 @@ pub async fn spawn_client_task(
     tokio::spawn(async move {
         let handle_error = async move |e: WireError| match e {
             e => {
+                eprintln!("client reader error: {:?}", e);
                 let _ = event_tx_writer.send(NetworkEvent::ErrorOccurred(e)).await;
             }
         };

@@ -17,7 +17,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 #[derive(Debug)]
 pub enum NetworkCommand {
     SpawnClient { username: String },
-    CreateRoom { username: String },
+    CreateRoom { client_id: u64, username: String },
     SendMessage { data: InboxEntry },
     JoinRoom { client_id: u64, room_id: u64 },
 }
@@ -106,32 +106,20 @@ impl ServerState {
 }
 
 pub struct ClientState {
-    pub client: Client,
+    pub senders: Arc<Mutex<HashMap<u64, Sender<ClientRequest>>>>,
     pub clients: Arc<Mutex<HashMap<u64, ClientInfo>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
     pub event_tx: Sender<NetworkEvent>,
 }
 
 impl ClientState {
-    pub async fn new(
-        id: u64,
-        username: String,
-        cmd_tx: Option<Sender<ClientRequest>>,
-        event_tx: Sender<NetworkEvent>,
-        writer: Option<Sender<ServerEvent>>,
-        ip: String,
-        port: u16,
-    ) -> Self {
+    pub async fn new(event_tx: Sender<NetworkEvent>) -> Self {
         ClientState {
-            client: Client::new(id, username, cmd_tx, writer, ip, port),
+            senders: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
         }
-    }
-
-    pub async fn default(event_tx: Sender<NetworkEvent>) -> Self {
-        Self::new(0, String::new(), None, event_tx, None, String::new(), 0).await
     }
 
     pub async fn register(&mut self, client: ClientInfo) {
@@ -169,7 +157,6 @@ pub async fn run_network_engine(
             );
         }
     };
-    println!("Server started on {}", server_addr.clone());
     // Map of active client connections on the server side
     let server_state = Arc::new(ServerState::new().await);
 
