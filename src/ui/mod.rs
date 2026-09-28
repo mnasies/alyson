@@ -30,10 +30,12 @@ pub async fn run(
         // Wait for the network to assign an ID to the client
         if let Some(NetworkEvent::MyClient { id }) = event_rx.recv().await {
             main_app.identity_mode = IdentityMode::Fixed(Some(id));
+            main_app.current_clients.0 = Some(id);
         } else {
             main_app.identity_mode = IdentityMode::Default;
         }
         main_app.focus = app::Focus::ClientList;
+        main_app.selected.client_selected = Some(0);
     } else {
         main_app.identity_mode = IdentityMode::Default;
     }
@@ -110,7 +112,6 @@ pub async fn run(
 
         // Check for network events
         while let Ok(event) = event_rx.try_recv() {
-            eprintln!("ui event: {:?}", event);
             match event {
                 NetworkEvent::MyClient { id: _ } => {}
                 NetworkEvent::ClientConnected(client_info) => {
@@ -137,9 +138,11 @@ pub async fn run(
                     main_app.errors.push((Instant::now(), err));
                 }
                 NetworkEvent::RoomCreated { room } => {
-                    main_app.rooms.push(room);
+                    if !main_app.rooms.iter().any(|c| c.id == room.id) {
+                        main_app.rooms.push(room);
+                    }
                 }
-                NetworkEvent::JoinedRoom { client_id, room_id } => {
+                NetworkEvent::RoomJoined { client_id, room_id } => {
                     for room in main_app.rooms.iter_mut() {
                         if room.id == room_id as u64 {
                             room.add_member(client_id as u64);
@@ -169,7 +172,12 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     Some(n) => n,
                     None => 0,
                 };
-                let last_index = main_app.clients.len().saturating_sub(1) as usize;
+                let last_index = match main_app.identity_mode {
+                    IdentityMode::Default | IdentityMode::Fixed(None) => {
+                        main_app.clients.len().saturating_sub(1) as usize
+                    }
+                    IdentityMode::Fixed(Some(_)) => 0,
+                };
                 if cli == last_index {
                     main_app.focus = app::Focus::ClientOption;
                     main_app.selected.client_selected = None;

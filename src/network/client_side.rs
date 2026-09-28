@@ -75,7 +75,12 @@ pub async fn run_client(
                 };
                 match &sender {
                     Some(m) => {
-                        let _ = m.send(ClientRequest::CreateRoom { username }).await;
+                        let _ = m
+                            .send(ClientRequest::CreateRoom {
+                                client_id,
+                                username,
+                            })
+                            .await;
                     }
                     None => {
                         let _ = event_tx
@@ -231,6 +236,19 @@ pub async fn spawn_client_task(
                 ServerEvent::ClientDisconnected(id) => {
                     let _ = event_tx_entry
                         .send(NetworkEvent::ClientDisconnected { id })
+                        .await;
+                }
+                ServerEvent::RoomCreated(room) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomCreated { room })
+                        .await;
+                }
+                ServerEvent::RoomJoined { client_id, room } => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomJoined {
+                            client_id,
+                            room_id: room.id,
+                        })
                         .await;
                 }
                 // ServerEvent::Error(err) => {

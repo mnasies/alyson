@@ -1,5 +1,5 @@
 pub mod client_side;
-use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room, ServerEvent};
+use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room};
 use client_side::run_client;
 
 pub mod framing;
@@ -27,7 +27,7 @@ pub enum NetworkEvent {
     ClientConnected(ClientInfo),
     ClientDisconnected { id: u64 },
     RoomCreated { room: Room },
-    JoinedRoom { client_id: u64, room_id: u64 },
+    RoomJoined { client_id: u64, room_id: u64 },
     MessageReceived(InboxEntry),
     MyClient { id: u64 },
     ErrorOccurred(WireError),

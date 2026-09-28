@@ -24,7 +24,7 @@ impl ClientInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClientRequest {
-    CreateRoom { username: String },
+    CreateRoom { client_id: u64, username: String },
     JoinRoom { client_id: u64, room_id: u64 },
     ChatMessage(InboxEntry),
 }
@@ -38,7 +38,7 @@ pub enum ServerEvent {
     PeerLeft(usize),
     ChatMessage(InboxEntry),
     RoomCreated(Room),
-    RoomJoined(Room),
+    RoomJoined { client_id: u64, room: Room },
     Error(String),
 }
 
@@ -104,14 +104,16 @@ pub struct Room {
     pub id: u64,
     pub username: String,
     pub members: HashSet<u64>,
+    pub owner: u64,
 }
 
 impl Room {
-    pub fn new(id: u64, username: String) -> Self {
+    pub fn new(id: u64, username: String, owner: u64) -> Self {
         Self {
             id,
             username,
             members: HashSet::new(),
+            owner,
         }
     }
 

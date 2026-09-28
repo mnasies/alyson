@@ -1,6 +1,6 @@
 use crate::WireError;
 use crate::network::{ServerState, framing};
-use crate::types::{Client, ClientInfo, ClientRequest, ServerEvent};
+use crate::types::{Client, ClientInfo, ClientRequest, Room, ServerEvent};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -136,6 +136,7 @@ pub async fn handle_incoming_connection(
     let clients_reader = Arc::clone(&clients);
     let curr_client_r = client.clone();
     let rooms_reader = Arc::clone(&rooms);
+    let server_state_clone = Arc::clone(&server_state);
     // let event_tx_reader = event_tx.clone();
     tokio::spawn(async move {
         let clients_reader_clone = clients_reader.clone();
@@ -149,7 +150,12 @@ pub async fn handle_incoming_connection(
                     if entry.cli_or_room {
                         if let Some(client) = clients_lock.get(&entry.to) {
                             if let Some(writer) = &client.writer {
-                                let _ = writer.send(ServerEvent::ChatMessage(entry)).await;
+                                let _ = writer.send(ServerEvent::ChatMessage(entry.clone())).await;
+                            }
+                        }
+                        if let Some(client) = clients_lock.get(&entry.from) {
+                            if let Some(writer) = &client.writer {
+                                let _ = writer.send(ServerEvent::ChatMessage(entry.clone())).await;
                             }
                         }
                     } else {
@@ -166,7 +172,44 @@ pub async fn handle_incoming_connection(
                         }
                     }
                 }
-                _ => {}
+                ClientRequest::CreateRoom {
+                    client_id,
+                    username,
+                } => {
+                    // Add a new room to the server state rooms list
+                    let id = server_state_clone.next_room_id();
+                    let new_room = Room::new(id, username, client_id);
+                    rooms_reader.lock().await.insert(id, new_room.clone());
+                    // Notify all clients of the new room
+                    for (_, client) in clients_reader_clone.lock().await.iter() {
+                        let Some(writer) = &client.writer else {
+                            continue;
+                        };
+                        let _ = writer
+                            .send(ServerEvent::RoomCreated(new_room.clone()))
+                            .await;
+                    }
+                }
+                ClientRequest::JoinRoom { client_id, room_id } => {
+                    // add the client to the room
+                    let rooms_reader_clone = rooms_reader.clone();
+                    if let Some(room) = rooms_reader_clone.lock().await.get_mut(&room_id) {
+                        room.add_member(client_id);
+
+                        // Notify the client of the room join
+                        let client = { clients_reader_clone.lock().await.get(&client_id).cloned() };
+                        if let Some(client) = client {
+                            if let Some(writer) = client.writer {
+                                let _ = writer
+                                    .send(ServerEvent::RoomJoined {
+                                        client_id,
+                                        room: room.clone(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                }
             }
         };
         let curr_client_er = curr_client_r.clone();
