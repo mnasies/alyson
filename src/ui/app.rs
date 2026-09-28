@@ -1,15 +1,7 @@
 use crate::WireError;
-use crate::client::{InboxEntry, Room};
 use crate::network::NetworkHandle;
+use crate::types::{ClientInfo, InboxEntry, Room};
 use std::time::Instant;
-
-#[derive(Clone)]
-pub struct ClientSummary {
-    pub id: usize,
-    pub name: String,
-    pub ip: String,
-    pub port: u16,
-}
 
 pub enum InputResult {
     Continue,
@@ -30,7 +22,7 @@ pub enum InputMode {
 
 pub enum DashBoardView {
     Idle,
-    ClientView(usize, CurrentWindow),
+    ClientView(u64, CurrentWindow),
 }
 
 pub enum CurrentWindow {
@@ -44,7 +36,7 @@ pub enum CurrentWindow {
 pub enum ActionState {
     SendMessage,
     JoinChatRoom,
-    CreateChatRoom,
+    CreateChatRoom(u64),
     SendMessageToRoom,
     None,
 }
@@ -59,6 +51,11 @@ pub enum Focus {
     RoomboxWindow,
     RoomInterface,
     None,
+}
+
+pub enum IdentityMode {
+    Default,
+    Fixed(Option<u64>),
 }
 
 pub struct AppBuf {
@@ -110,16 +107,17 @@ pub struct App {
     pub selected: Selection,
     pub input_mode: InputMode,
     pub dashboard_view: DashBoardView,
-    pub clients: Vec<ClientSummary>,
+    pub clients: Vec<ClientInfo>,
     pub action_state: ActionState,
     pub buf: AppBuf,
     pub focus: Focus,
     pub errors: Vec<(Instant, WireError)>,
     pub inboxes: Vec<InboxEntry>,
-    pub current_clients: (Option<usize>, Option<usize>), // (current sender client, current receiver client)
-    pub current_room: Option<usize>,
+    pub current_clients: (Option<u64>, Option<u64>), // (current sender client, current receiver client)
+    pub current_room: Option<u64>,
     pub messages_scroll: usize, // lines scrolled up from the bottom; 0 = pinned to newest
     pub rooms: Vec<Room>,
+    pub identity_mode: IdentityMode,
 }
 
 impl App {
@@ -139,6 +137,7 @@ impl App {
             current_room: None,
             messages_scroll: 0,
             rooms: Vec::new(),
+            identity_mode: IdentityMode::Default,
         }
     }
 
@@ -148,7 +147,7 @@ impl App {
             ActionState::SendMessage | ActionState::SendMessageToRoom => {
                 Some(&mut self.buf.msg_to_client)
             }
-            ActionState::CreateChatRoom => Some(&mut self.buf.new_room_name),
+            ActionState::CreateChatRoom(_) => Some(&mut self.buf.new_room_name),
             _ => None,
         }
     }
@@ -157,7 +156,7 @@ impl App {
         if let Some(room_id) = self.current_room {
             if let Some(room) = self.rooms.iter().find(|room| room.id == room_id) {
                 if let Some(cli_id) = self.current_clients.0 {
-                    if room.is_member(cli_id) {
+                    if room.is_member(cli_id as u64) {
                         return true;
                     }
                 }
@@ -171,8 +170,8 @@ impl App {
             return Err(WireError::InvalidName);
         } else {
             for client in self.clients.iter() {
-                if name == client.name {
-                    return Ok(client.id);
+                if name == client.username {
+                    return Ok(client.id as usize);
                 }
             }
         }
@@ -191,12 +190,12 @@ impl App {
                 }
                 self.buf.new_client_name.clear();
             }
-            ActionState::CreateChatRoom => {
+            ActionState::CreateChatRoom(id) => {
                 let name = self.buf.new_room_name.trim().to_string();
                 self.input_mode = InputMode::Selecting;
                 if !name.is_empty() {
                     // actually create the client — network call, next
-                    net_handle.create_room(name)?;
+                    net_handle.create_room(*id, name)?;
                 }
                 self.buf.new_room_name.clear();
             }
@@ -240,8 +239,8 @@ impl App {
                     let entry = InboxEntry::new(
                         std::time::SystemTime::now(),
                         msg,
-                        sender,
-                        receiver,
+                        sender as u64,
+                        receiver as u64,
                         cli_or_room,
                     );
                     if let Err(e) = net_handle.send_message(entry) {

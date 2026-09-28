@@ -1,6 +1,6 @@
-use crate::client::InboxEntry;
+use crate::types::InboxEntry;
 use crate::ui::app;
-use crate::ui::app::{ActionState, App};
+use crate::ui::app::{ActionState, App, IdentityMode};
 
 use ratatui::{
     Frame,
@@ -48,7 +48,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
             }
-            ActionState::CreateChatRoom => {
+            ActionState::CreateChatRoom(_) => {
                 let content = format!("New room name:\n\n{}_", app.buf.new_room_name);
                 let info = Paragraph::new(content).block(block_left);
                 frame.render_widget(info, canvas);
@@ -74,7 +74,7 @@ fn draw_main_pane(frame: &mut Frame, canvas: Rect, app: &mut App) {
     };
 }
 
-fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
+fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: u64) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -82,19 +82,19 @@ fn draw_client_info(frame: &mut Frame, canvas: Rect, app: &mut App, id: usize) {
             Constraint::Percentage(80), // options list, takes remaining space
         ])
         .split(canvas);
-    let client_name = match app.clients.iter().find(|c| c.id == id) {
-        Some(c) => c.name.clone(),
+    let client_name = match app.clients.iter().find(|c| c.id == id as u64) {
+        Some(c) => c.username.clone(),
         None => "Unknown client".to_string(),
     };
     let upper_block = Block::default()
         .title(client_name.clone())
         .borders(Borders::ALL);
 
-    let ip = match app.clients.iter().find(|c| c.id == id) {
+    let ip = match app.clients.iter().find(|c| c.id == id as u64) {
         Some(c) => c.ip.clone(),
         None => "Unknown IP".to_string(),
     };
-    let port = match app.clients.iter().find(|c| c.id == id) {
+    let port = match app.clients.iter().find(|c| c.id == id as u64) {
         Some(c) => c.port,
         None => 0,
     };
@@ -171,7 +171,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 }
                 None => Style::default(),
             };
-            let line = Line::from(cli.name.clone()).alignment(Alignment::Left);
+            let line = Line::from(cli.username.clone()).alignment(Alignment::Left);
             ListItem::new(line).style(style)
         })
         .collect();
@@ -200,8 +200,10 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .inboxes
         .iter()
         .filter(|e| {
-            (e.from == sender_id && e.to == receiver_id && e.cli_or_room == true)
-                || (e.from == receiver_id && e.to == sender_id && e.cli_or_room == true)
+            (e.from == sender_id as u64 && e.to == receiver_id as u64 && e.cli_or_room == true)
+                || (e.from == receiver_id as u64
+                    && e.to == sender_id as u64
+                    && e.cli_or_room == true)
         })
         .collect();
     convo.sort_by_key(|e| e.time);
@@ -210,7 +212,7 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
 
     let mut all_lines: Vec<Line> = Vec::new();
     for entry in &convo {
-        let is_outgoing = entry.from == sender_id;
+        let is_outgoing = entry.from == sender_id as u64;
         let color = if is_outgoing {
             Color::Cyan
         } else {
@@ -317,7 +319,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         let mut convo: Vec<&InboxEntry> = app
             .inboxes
             .iter()
-            .filter(|e| e.to == room_id && e.cli_or_room == false)
+            .filter(|e| e.to == room_id as u64 && e.cli_or_room == false)
             .collect();
         convo.sort_by_key(|e| e.time);
 
@@ -325,7 +327,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
 
         let mut all_lines: Vec<Line> = Vec::new();
         for entry in &convo {
-            let is_outgoing = entry.from == sender_id;
+            let is_outgoing = entry.from == sender_id as u64;
             let color = if is_outgoing {
                 Color::Cyan
             } else {
@@ -391,8 +393,27 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(canvas);
+    let clients;
+    let options;
+    match app.identity_mode {
+        IdentityMode::Fixed(Some(id)) => {
+            clients = app
+                .clients
+                .iter()
+                .filter(|cli| cli.id == id)
+                .cloned()
+                .collect();
+            options = vec![String::from("Create New Chat Room")];
+        }
+        IdentityMode::Default | IdentityMode::Fixed(None) => {
+            clients = app.clients.clone();
+            options = vec![
+                String::from("Create New Chat Room"),
+                String::from("Create New Client"),
+            ];
+        }
+    }
 
-    let clients = &app.clients;
     let client_list: Vec<ListItem> = clients
         .iter()
         .enumerate()
@@ -407,17 +428,13 @@ fn draw_client_sidebar(frame: &mut Frame, canvas: Rect, app: &mut App) {
                 }
                 None => Style::default(),
             };
-            ListItem::new(cli.name.clone()).style(style)
+            ListItem::new(cli.username.clone()).style(style)
         })
         .collect();
     let list = List::new(client_list).block(block_right);
 
     frame.render_widget(list, chunks[0]);
 
-    let options = vec![
-        String::from("New Client"),
-        String::from("Create New Chat Room"),
-    ];
     let cli_opt_list: Vec<ListItem> = options
         .iter()
         .enumerate()

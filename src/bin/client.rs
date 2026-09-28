@@ -1,7 +1,7 @@
-// use alyson::WireError;
+use alyson::WireError;
+use alyson::network::client_side::run_client;
 use alyson::network::{NetworkHandle, run_network_engine};
 
-use alyson::WireError;
 use alyson::ui::run;
 use crossterm::{
     execute,
@@ -10,6 +10,8 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use tokio::sync::mpsc;
+
+use std::env;
 
 fn reset_terminal() {
     use std::io::Write;
@@ -21,14 +23,34 @@ fn reset_terminal() {
 
 #[tokio::main]
 async fn main() -> Result<(), WireError> {
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
     // --- channels setup ---
     let (cmd_tx, cmd_rx) = mpsc::channel(100);
     let (event_tx, event_rx) = mpsc::channel(100);
-    let identity_mode = 0; // 0: default, 1: fixed
-    let client_name = String::new();
+    let identity_mode; // 0: random, 1: fixed
+    let mut client_name = String::new();
 
-    // dev mode: this process spawns BOTH the server task and a client task,
-    tokio::spawn(run_network_engine(cmd_rx, event_tx));
+    match args.get(1).map(String::as_str) {
+        Some("connect") => {
+            let addr = args
+                .get(2)
+                .cloned()
+                .expect("usage: client connect <ip>:<port> --name <name>");
+            let name_idx = args.iter().position(|a| a == "--name");
+            client_name = name_idx
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+                .expect("--name <name> is required for connect mode");
+            tokio::spawn(run_client(event_tx, cmd_rx, addr));
+            identity_mode = 1;
+        }
+        _ => {
+            // dev mode: this process spawns BOTH the server task and a client task,
+            tokio::spawn(run_network_engine(cmd_rx, event_tx));
+            identity_mode = 0;
+        }
+    }
 
     // --- panic hook setup to prevent breaking terminal on panic ---
     let original_hook = std::panic::take_hook();
