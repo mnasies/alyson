@@ -1,45 +1,195 @@
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
-use crate::network::{NetworkEvent, NetworkState, framing};
+use crate::network::{ClientState, NetworkCommand, NetworkEvent, framing};
+use crate::types::{Client, ClientInfo, ClientRequest, ServerEvent};
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::{Receiver, Sender};
+
+pub async fn run_client(
+    event_tx: Sender<NetworkEvent>,
+    mut cmd_rx: Receiver<NetworkCommand>,
+    server_addr: String,
+) -> Result<(), WireError> {
+    let client_state = Arc::new(Mutex::new(ClientState::new(event_tx.clone()).await));
+
+    // let (clients, rooms) = {
+    //     let client_state_lock = client_state.lock().await;
+    //     (
+    //         Arc::clone(&client_state_lock.clients),
+    //         Arc::clone(&client_state_lock.rooms),
+    //     )
+    // };
+
+    // Handle UI commands
+    while let Some(cmd) = cmd_rx.recv().await {
+        match cmd {
+            NetworkCommand::SpawnClient { username } => {
+                let client_state_clone = Arc::clone(&client_state);
+                let server_addr_clone = server_addr.clone();
+                let event_tx_clone = event_tx.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        spawn_client_task(username, server_addr_clone, client_state_clone).await
+                    {
+                        let _ = event_tx_clone.send(NetworkEvent::ErrorOccurred(e)).await;
+                    }
+                });
+            }
+            NetworkCommand::SendMessage { data } => {
+                let sender = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&data.from)
+                        .cloned()
+                };
+                match &sender {
+                    Some(m) => {
+                        let _ = m.send(ClientRequest::ChatMessage(data)).await;
+                    }
+                    None => {
+                        let _ = event_tx
+                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .await;
+                    }
+                }
+            }
+            NetworkCommand::CreateRoom {
+                client_id,
+                username,
+            } => {
+                let sender = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&client_id)
+                        .cloned()
+                };
+                match &sender {
+                    Some(m) => {
+                        let _ = m
+                            .send(ClientRequest::CreateRoom {
+                                client_id,
+                                username,
+                            })
+                            .await;
+                    }
+                    None => {
+                        let _ = event_tx
+                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .await;
+                    }
+                }
+            }
+            NetworkCommand::JoinRoom { client_id, room_id } => {
+                let sender = {
+                    let client_state_lock = client_state.lock().await;
+                    client_state_lock
+                        .senders
+                        .lock()
+                        .await
+                        .get(&client_id)
+                        .cloned()
+                };
+                match &sender {
+                    Some(m) => {
+                        let _ = m.send(ClientRequest::JoinRoom { client_id, room_id }).await;
+                    }
+                    None => {
+                        let _ = event_tx
+                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 // Client Side Handling
 pub async fn spawn_client_task(
     username: String,
-    server_port: u16,
-    net_state: Arc<NetworkState>,
-) -> Result<(), WireError> {
+    server_addr: String,
+    client_state: Arc<Mutex<ClientState>>,
+) -> Result<Client, WireError> {
     use AsyncWriteExt;
 
-    let clients = Arc::clone(&net_state.clients);
-    let event_tx = net_state.event_tx.clone();
+    let (clients, event_tx) = {
+        let client_state = client_state.lock().await;
+        (
+            Arc::clone(&client_state.clients),
+            client_state.event_tx.clone(),
+        )
+    };
 
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", server_port)).await?;
-    let local_port = stream.local_addr()?.port();
+    let mut stream = TcpStream::connect(server_addr).await?;
+    let ip = stream.peer_addr()?.ip().to_string();
+    let port = stream.peer_addr()?.port();
 
     // Handshake: write username
     let handshake_msg = format!("{}\n", username);
     stream.write_all(handshake_msg.as_bytes()).await?;
 
-    // Resolve client ID using local port
-    let client_id = resolve_client_id_by_port(&clients, local_port).await?;
+    // Resolve client ID by reading the first line of the server response
+    let (read_half, writer) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut client_id = String::new();
+    reader.read_line(&mut client_id).await?;
+    let client_id: u64 = client_id.trim().parse().unwrap();
 
-    let (reader, writer) = stream.into_split();
-    let reader = BufReader::new(reader);
+    // Send the client ID back to the UI side
+    event_tx
+        .send(NetworkEvent::MyClient { id: client_id })
+        .await
+        .map_err(|_| WireError::ChannelNotFound)?;
 
-    // Create client writer channel
-    let (cmd_tx, cmd_rx) = mpsc::channel::<InboxEntry>(32);
-
-    // Assign cmd_tx
+    // Add the client to the clients list
     {
         let mut lock = clients.lock().await;
+        lock.insert(
+            client_id,
+            ClientInfo::new(client_id, username.clone(), ip, port),
+        );
+    }
+
+    // Create client writer channel
+    let (cmd_tx, cmd_rx) = mpsc::channel::<ClientRequest>(32);
+
+    // Assign client
+    let client = {
+        let mut lock = clients.lock().await;
         if let Some(client) = lock.get_mut(&client_id) {
-            client.cmd_tx = Some(cmd_tx);
+            Client::new(
+                client.id,
+                client.username.clone(),
+                Some(cmd_tx),
+                None,
+                client.ip.clone(),
+                client.port,
+            )
+        } else {
+            return Err(WireError::ClientNotFound);
+        }
+    };
+
+    // Assign the ClientRequest sender
+    {
+        let client_state_lock = client_state.lock().await;
+        if let Some(sender) = client.cmd_tx.clone() {
+            client_state_lock
+                .senders
+                .lock()
+                .await
+                .insert(client_id, sender);
         }
     }
 
@@ -47,19 +197,74 @@ pub async fn spawn_client_task(
 
     // Client-side reader task
     tokio::spawn(async move {
-        let event_tx_clone = event_tx_reader.clone();
-        let handle_entry = async move |entry: InboxEntry| {
-            // 5. Forward to UI / Event handler
-            if event_tx_clone
-                .send(NetworkEvent::MessageReceived(entry))
-                .await
-                .is_err()
-            {
-                // Channel receiver was dropped (UI closed/shutdown)
-                return;
+        let event_tx_entry = event_tx_reader.clone();
+        let handle_entry = async move |msg: ServerEvent| {
+            match msg {
+                ServerEvent::ChatMessage(entry) => {
+                    // 5. Forward to UI / Event handler
+                    if event_tx_entry
+                        .send(NetworkEvent::MessageReceived(entry))
+                        .await
+                        .is_err()
+                    {
+                        // Channel receiver was dropped (UI closed/shutdown)
+                        return;
+                    }
+                }
+                ServerEvent::PeerJoined(client_info) => {
+                    if event_tx_entry
+                        .send(NetworkEvent::ClientConnected(client_info))
+                        .await
+                        .is_err()
+                    {
+                        // Channel receiver was dropped (UI closed/shutdown)
+                        return;
+                    }
+                }
+                ServerEvent::Roster(clients) => {
+                    for client in clients {
+                        if event_tx_entry
+                            .send(NetworkEvent::ClientConnected(client))
+                            .await
+                            .is_err()
+                        {
+                            // Channel receiver was dropped (UI closed/shutdown)
+                            return;
+                        }
+                    }
+                }
+                ServerEvent::ClientDisconnected(id) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ClientDisconnected { id })
+                        .await;
+                }
+                ServerEvent::RoomCreated(room) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomCreated { room })
+                        .await;
+                }
+                ServerEvent::RoomJoined { client_id, room } => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomJoined {
+                            client_id,
+                            room_id: room.id,
+                        })
+                        .await;
+                }
+                // ServerEvent::Error(err) => {
+                //     let _ = event_tx_entry.send(NetworkEvent::ErrorOccurred(err)).await;
+                // }
+                _ => {}
             }
         };
-        framing::read_framed_loop(reader, event_tx_reader.clone(), handle_entry).await;
+        let event_tx_error = event_tx_reader.clone();
+        let handle_error = async move |e: WireError| match e {
+            e => {
+                eprintln!("client reader error: {:?}", e);
+                let _ = event_tx_error.send(NetworkEvent::ErrorOccurred(e)).await;
+            }
+        };
+        framing::read_framed_loop(reader, handle_entry, handle_error).await;
 
         // Surface the disconnect to the UI as a toast + sidebar cleanup.
         let _ = event_tx_reader
@@ -71,28 +276,14 @@ pub async fn spawn_client_task(
 
     // Client-side writer task
     tokio::spawn(async move {
-        framing::write_framed_loop(writer, cmd_rx, event_tx_writer).await;
+        let handle_error = async move |e: WireError| match e {
+            e => {
+                eprintln!("client reader error: {:?}", e);
+                let _ = event_tx_writer.send(NetworkEvent::ErrorOccurred(e)).await;
+            }
+        };
+        framing::write_framed_loop(writer, cmd_rx, handle_error).await;
     });
 
-    Ok(())
-}
-
-async fn resolve_client_id_by_port(
-    clients: &Arc<tokio::sync::Mutex<HashMap<usize, Client>>>,
-    local_port: u16,
-) -> Result<usize, WireError> {
-    let timeout = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    loop {
-        {
-            let lock = clients.lock().await;
-            if let Some(client) = lock.values().find(|c| c.port == local_port) {
-                return Ok(client.id);
-            }
-        }
-        if start.elapsed() > timeout {
-            return Err(WireError::ClientRegistrationTimeout);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    Ok(client)
 }

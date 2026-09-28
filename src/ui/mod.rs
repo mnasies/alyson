@@ -4,7 +4,7 @@ pub mod ui;
 
 use crate::WireError;
 use crate::network::{NetworkEvent, NetworkHandle};
-pub use app::{App, DashBoardView, Focus, InputResult};
+pub use app::{App, DashBoardView, Focus, IdentityMode, InputResult};
 use std::time::{Duration, Instant};
 use ui::{draw_error_toast, ui};
 
@@ -19,8 +19,26 @@ pub async fn run(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     net_handle: NetworkHandle,
     mut event_rx: Receiver<NetworkEvent>,
+    identity_mode: u8,
+    client_name: String,
 ) -> Result<(), WireError> {
     let mut main_app = App::new();
+    if identity_mode == 1 {
+        main_app.screen = app::Screen::Dashboard;
+        let _ = net_handle.spawn_client(client_name);
+
+        // Wait for the network to assign an ID to the client
+        if let Some(NetworkEvent::MyClient { id }) = event_rx.recv().await {
+            main_app.identity_mode = IdentityMode::Fixed(Some(id));
+            main_app.current_clients.0 = Some(id);
+        } else {
+            main_app.identity_mode = IdentityMode::Default;
+        }
+        main_app.focus = app::Focus::ClientList;
+        main_app.selected.client_selected = Some(0);
+    } else {
+        main_app.identity_mode = IdentityMode::Default;
+    }
 
     loop {
         // Clean up old errors
@@ -95,18 +113,11 @@ pub async fn run(
         // Check for network events
         while let Ok(event) = event_rx.try_recv() {
             match event {
-                NetworkEvent::ClientConnected {
-                    id,
-                    username,
-                    ip,
-                    port,
-                } => {
-                    main_app.clients.push(app::ClientSummary {
-                        id,
-                        name: username,
-                        ip,
-                        port,
-                    });
+                NetworkEvent::MyClient { id: _ } => {}
+                NetworkEvent::ClientConnected(client_info) => {
+                    if !main_app.clients.iter().any(|c| c.id == client_info.id) {
+                        main_app.clients.push(client_info);
+                    }
                 }
                 NetworkEvent::ClientDisconnected { id } => {
                     main_app.clients.retain(|c| c.id != id);
@@ -127,12 +138,14 @@ pub async fn run(
                     main_app.errors.push((Instant::now(), err));
                 }
                 NetworkEvent::RoomCreated { room } => {
-                    main_app.rooms.push(room);
+                    if !main_app.rooms.iter().any(|c| c.id == room.id) {
+                        main_app.rooms.push(room);
+                    }
                 }
-                NetworkEvent::JoinedRoom { client_id, room_id } => {
+                NetworkEvent::RoomJoined { client_id, room_id } => {
                     for room in main_app.rooms.iter_mut() {
-                        if room.id == room_id {
-                            room.add_member(client_id);
+                        if room.id == room_id as u64 {
+                            room.add_member(client_id as u64);
                         }
                     }
                 }
@@ -159,7 +172,12 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     Some(n) => n,
                     None => 0,
                 };
-                let last_index = main_app.clients.len().saturating_sub(1);
+                let last_index = match main_app.identity_mode {
+                    IdentityMode::Default | IdentityMode::Fixed(None) => {
+                        main_app.clients.len().saturating_sub(1) as usize
+                    }
+                    IdentityMode::Fixed(Some(_)) => 0,
+                };
                 if cli == last_index {
                     main_app.focus = app::Focus::ClientOption;
                     main_app.selected.client_selected = None;
@@ -223,24 +241,30 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                 }
             }
             KeyCode::Down => {
+                let n = match main_app.identity_mode {
+                    IdentityMode::Default => 1,
+                    IdentityMode::Fixed(_) => 0,
+                };
                 let cli_opt = match main_app.selected.cli_opt_selected {
                     Some(n) => n,
                     None => 0,
                 };
-                if cli_opt < 1 {
+                if cli_opt < n {
                     main_app.selected.cli_opt_selected = Some(cli_opt + 1);
                 }
             }
             KeyCode::Enter => match main_app.selected.cli_opt_selected {
                 Some(0) => {
                     main_app.input_mode = app::InputMode::Typing;
-                    main_app.buf.new_client_name.clear();
-                    main_app.action_state = app::ActionState::None;
+                    main_app.buf.new_room_name.clear();
+                    if let Some(id) = main_app.current_clients.0 {
+                        main_app.action_state = app::ActionState::CreateChatRoom(id);
+                    }
                 }
                 Some(1) => {
                     main_app.input_mode = app::InputMode::Typing;
-                    main_app.buf.new_room_name.clear();
-                    main_app.action_state = app::ActionState::CreateChatRoom;
+                    main_app.buf.new_client_name.clear();
+                    main_app.action_state = app::ActionState::None;
                 }
                 _ => {}
             },

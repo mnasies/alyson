@@ -1,24 +1,68 @@
 use crate::WireError;
-use crate::client::{Client, InboxEntry};
-use crate::network::{NetworkEvent, NetworkState, framing};
-
+use crate::network::{ServerState, framing};
+use crate::types::{Client, ClientInfo, ClientRequest, Room, ServerEvent};
 use std::sync::Arc;
-use tokio::net::TcpStream;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+
+pub async fn accept_loop(listener: TcpListener, server_state: Arc<ServerState>) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let server_state_inner = Arc::clone(&server_state);
+                tokio::spawn(async move {
+                    let _ = handle_incoming_connection(stream, server_state_inner).await;
+                });
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+// main server loop
+pub async fn run_server(addr: String) -> Result<String, WireError> {
+    let listener = match TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            panic!(
+                "fatal: could not bind TCP listener ({}). The network engine cannot start.",
+                e
+            );
+        }
+    };
+    let server_addr = match listener.local_addr() {
+        Ok(addr) => addr.to_string(),
+        Err(e) => {
+            panic!(
+                "fatal: could not read local addr of TCP listener ({}). The network engine cannot start.",
+                e
+            );
+        }
+    };
+    println!("Server started on {}", server_addr.clone());
+    // Map of active client connections on the server side
+    let server_state = Arc::new(ServerState::new().await);
+
+    // Spawn the server accept loop
+    let server_state_clone = Arc::clone(&server_state);
+    // Server-side task that accepts incoming connections
+    accept_loop(listener, server_state_clone).await;
+    Ok(server_addr)
+}
 
 // Server Side Handling
 pub async fn handle_incoming_connection(
     stream: TcpStream,
-    net_state: Arc<NetworkState>,
+    server_state: Arc<ServerState>,
 ) -> Result<(), WireError> {
     use tokio::io::AsyncBufReadExt;
 
-    let clients = net_state.clients.clone();
-    let rooms = net_state.rooms.clone();
-    let next_id = net_state.next_id.clone();
-    let event_tx = net_state.event_tx.clone();
+    let clients = server_state.clients.clone();
+    let rooms = server_state.rooms.clone();
+    let next_id = server_state.next_id.clone();
 
     // Read first line as username (handshake)
-    let (reader, writer) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
     let mut reader = tokio::io::BufReader::new(reader);
     let mut username = String::new();
     match reader.read_line(&mut username).await {
@@ -39,73 +83,178 @@ pub async fn handle_incoming_connection(
     let port = peer_addr.port();
 
     // Create server communication channel
-    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<InboxEntry>(32);
+    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<ServerEvent>(32);
 
+    // Create the new client
     let client = Client::new(
         client_id,
         username.clone(),
         None,
-        write_tx,
+        Some(write_tx),
         ip.clone(),
         port,
     );
+
+    let client_info = ClientInfo::new(client_id, username.clone(), ip.clone(), port);
+
+    // Send the Client ID back to the client as part of the handshake protocol
+    let msg = format!("{}\n", client_id);
+    writer.write_all(msg.as_bytes()).await?;
     {
         let mut lock = clients.lock().await;
         lock.insert(client_id, client.clone());
     }
 
-    // Notify UI of new connection
-    let _ = event_tx
-        .send(NetworkEvent::ClientConnected {
-            id: client_id,
-            username,
-            ip,
-            port,
-        })
-        .await;
+    // Notify all clients of the new connection
+    for (_, client) in clients.lock().await.iter() {
+        let Some(writer) = &client.writer else {
+            continue;
+        };
+        let _ = writer
+            .send(ServerEvent::PeerJoined(client_info.clone()))
+            .await;
+    }
+
+    // Notify to the new client the list of all existing clients
+    let mut roster: Vec<ClientInfo> = Vec::new();
+    for (_, client) in clients.lock().await.iter() {
+        roster.push(ClientInfo::new(
+            client.id,
+            client.username.clone(),
+            client.ip.clone(),
+            client.port,
+        ));
+    }
+    if let Some(writer) = &client.writer {
+        let _ = writer.send(ServerEvent::Roster(roster)).await;
+    }
+
+    // push the new client to the clients list
+    clients.lock().await.insert(client_id, client.clone());
 
     // Server-side reader task of a Client
     let clients_reader = Arc::clone(&clients);
+    let curr_client_r = client.clone();
     let rooms_reader = Arc::clone(&rooms);
-    let event_tx_reader = event_tx.clone();
+    let server_state_clone = Arc::clone(&server_state);
+    // let event_tx_reader = event_tx.clone();
     tokio::spawn(async move {
         let clients_reader_clone = clients_reader.clone();
         let rooms_reader_clone = rooms_reader.clone();
-        let handle_entry = async move |entry: InboxEntry| {
-            // find the client and send the data to server-side writer task
-            let clients_lock = clients_reader_clone.lock().await;
-            let rooms_lock = rooms_reader_clone.lock().await;
-            if entry.cli_or_room {
-                if let Some(client) = clients_lock.get(&entry.to) {
-                    let _ = client.writer.send(entry).await;
+        let handle_entry = async move |msg: ClientRequest| {
+            match msg {
+                ClientRequest::ChatMessage(entry) => {
+                    // find the client and send the data to server-side writer task
+                    let clients_lock = clients_reader_clone.lock().await;
+                    let rooms_lock = rooms_reader_clone.lock().await;
+                    if entry.cli_or_room {
+                        if let Some(client) = clients_lock.get(&entry.to) {
+                            if let Some(writer) = &client.writer {
+                                let _ = writer.send(ServerEvent::ChatMessage(entry.clone())).await;
+                            }
+                        }
+                        if let Some(client) = clients_lock.get(&entry.from) {
+                            if let Some(writer) = &client.writer {
+                                let _ = writer.send(ServerEvent::ChatMessage(entry.clone())).await;
+                            }
+                        }
+                    } else {
+                        if let Some(room) = rooms_lock.get(&entry.to) {
+                            for cli_id in room.members.iter() {
+                                if let Some(client) = clients_lock.get(cli_id) {
+                                    if let Some(writer) = &client.writer {
+                                        let _ = writer
+                                            .send(ServerEvent::ChatMessage(entry.clone()))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            } else {
-                if let Some(room) = rooms_lock.get(&entry.to) {
-                    for cli_id in room.members.iter() {
-                        if let Some(client) = clients_lock.get(cli_id) {
-                            let _ = client.writer.send(entry.clone()).await;
+                ClientRequest::CreateRoom {
+                    client_id,
+                    username,
+                } => {
+                    // Add a new room to the server state rooms list
+                    let id = server_state_clone.next_room_id();
+                    let new_room = Room::new(id, username, client_id);
+                    rooms_reader.lock().await.insert(id, new_room.clone());
+                    // Notify all clients of the new room
+                    for (_, client) in clients_reader_clone.lock().await.iter() {
+                        let Some(writer) = &client.writer else {
+                            continue;
+                        };
+                        let _ = writer
+                            .send(ServerEvent::RoomCreated(new_room.clone()))
+                            .await;
+                    }
+                }
+                ClientRequest::JoinRoom { client_id, room_id } => {
+                    // add the client to the room
+                    let rooms_reader_clone = rooms_reader.clone();
+                    if let Some(room) = rooms_reader_clone.lock().await.get_mut(&room_id) {
+                        room.add_member(client_id);
+
+                        // Notify the client of the room join
+                        let client = { clients_reader_clone.lock().await.get(&client_id).cloned() };
+                        if let Some(client) = client {
+                            if let Some(writer) = client.writer {
+                                let _ = writer
+                                    .send(ServerEvent::RoomJoined {
+                                        client_id,
+                                        room: room.clone(),
+                                    })
+                                    .await;
+                            }
                         }
                     }
                 }
             }
         };
-        framing::read_framed_loop(reader, event_tx_reader.clone(), handle_entry).await;
+        let curr_client_er = curr_client_r.clone();
+        let handle_error = async move |err: WireError| {
+            let curr_client = curr_client_er.clone();
+            match err {
+                e => {
+                    let Some(writer) = curr_client.writer else {
+                        return;
+                    };
+                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+                }
+            }
+        };
+        framing::read_framed_loop(reader, handle_entry, handle_error).await;
 
         // Clean up client on disconnect
         {
             let mut lock = clients_reader.lock().await;
             lock.remove(&client_id);
         }
-        let _ = event_tx_reader
-            .send(NetworkEvent::ClientDisconnected { id: client_id })
+        let Some(writer) = curr_client_r.writer else {
+            return;
+        };
+        let _ = writer
+            .send(ServerEvent::ClientDisconnected(client_id))
             .await;
     });
 
     // Server-side writer task of a Client
 
-    let event_tx_writer = event_tx.clone();
+    let curr_client_w = client.clone();
     tokio::spawn(async move {
-        framing::write_framed_loop(writer, write_rx, event_tx_writer).await;
+        let handle_error = async move |err: WireError| {
+            let curr_client = curr_client_w.clone();
+            match err {
+                e => {
+                    let Some(writer) = curr_client.writer else {
+                        return;
+                    };
+                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
+                }
+            }
+        };
+        framing::write_framed_loop(writer, write_rx, handle_error).await;
     });
     Ok(())
 }
