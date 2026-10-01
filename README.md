@@ -1,27 +1,136 @@
 # Alyson
 
-Alyson is a terminal-based multi-client TCP inspector. It is a `netcat` replacement with a UI.
+Alyson is a terminal-based multi-client TCP inspection and messaging system written in Rust. It provides a real-time terminal user interface for spawning TCP clients, managing rooms, and inspecting bidirectional message traffic across socket connections.
 
-Alyson lets you spin up multiple TCP clients against a local server,
-watch connections in real time, and send messages between them from a
-single TUI. 
-It also let's you create chat rooms and send messages between multiple clients.
+## Architecture
 
-## Features
+Alyson separates terminal interface execution from asynchronous networking logic using message-passing channels.
 
-- Multi-client TCP server with a live dashboard of connected clients
-- Send messages between any two connected clients
-- Per-client conversation view (chat-style, sender/receiver aligned)
-- Robust error handling — recoverable errors show as toast notifications,
-  unrecoverable ones fail safely without corrupting terminal state
-- (in progress) Cross-machine hosting — one PC hosts, another joins over LAN
+```
+                      +-----------------------------+
+                      |      Ratatui / Crossterm    |
+                      |          TUI Engine         |
+                      +--------------+--------------+
+                                     |
+                          NetworkCommand / NetworkEvent
+                                 (mpsc channels)
+                                     |
+                      +--------------v--------------+
+                      |       Network Engine        |
+                      +-------+-------------+-------+
+                              |             |
+                     Client Handler     Server Accept Loop
+                              |             |
+                      +-------v-------------v-------+
+                      |    Framing Layer (Bincode)  |
+                      +--------------+--------------+
+                                     |
+                              TcpStream (TCP)
+```
 
-## Running
+The system operates across three decoupled layers:
+
+1. Application Layer: Manages UI rendering state, keyboard event polling, view routing, and local user input buffers.
+2. Network Engine: Coordinates client and server task spawning, routes outbound command requests, and broadcasts incoming network events.
+3. Transport and Framing Layer: Encapsulates serialized message payloads into length-prefixed TCP binary frames.
+
+## Mechanics
+
+### Protocol and Framing
+
+Communication over TCP uses a two-phase protocol:
+
+1. Handshake Phase: Upon establishing a connection, the client transmits a UTF-8 newline-terminated string containing its requested username (`<username>\n`). The server registers the connection, assigns a 64-bit integer client identifier (`u64`), and responds with the assigned ID followed by a newline (`<client_id>\n`).
+2. Message Phase: Subsequent data transfers follow a length-prefixed binary framing layout. Each frame consists of:
+   - Header: A 4-byte big-endian unsigned integer (`u32`) specifying the payload size in bytes.
+   - Payload: A Bincode-encoded payload representing either a `ClientRequest` or `ServerEvent` data structure.
+
+The framing reader validates header lengths against a maximum limit of 10 MB to prevent memory allocation failures from malformed streams.
+
+### Data Structures
+
+Network interactions rely on predefined Rust data structures serialized via Serde and Bincode:
+
+- `ClientRequest`: Outbound messages sent from clients to the server. Variant types include `CreateRoom`, `JoinRoom`, and `ChatMessage`.
+- `ServerEvent`: Inbound messages broadcast from the server to clients. Variant types include `Welcome`, `Roster`, `PeerJoined`, `ClientDisconnected`, `ChatMessage`, `RoomCreated`, `RoomJoined`, and `Error`.
+- `InboxEntry`: Struct containing timestamp, message payload string, sender ID, destination ID, and target flag distinguishing private client messages from room broadcasts.
+- `Room`: Server state struct tracking room ID, title, owner ID, and member ID set (`HashSet<u64>`).
+
+### Server Mechanics
+
+The server binds a `tokio::net::TcpListener` and executes an asynchronous accept loop. Each client connection spawns two Tokio background tasks:
+
+- Reader Task: Reads framed binary payloads from the socket, deserializes `ClientRequest` instances, updates internal state, and routes messages to target client queues.
+- Writer Task: Receives `ServerEvent` items from internal channels, serializes them with length headers, and writes them to the socket.
+
+Shared server state (`ServerState`) uses `Arc<Mutex<...>>` wrappers around client maps and room registries.
+
+### Client Mechanics
+
+Clients maintain a single `TcpStream` split into reader and writer halves. Inbound server events populate the application event channel. Outbound commands generated by user actions are serialized and pushed to the socket writer loop.
+
+### TUI and Panic Recovery
+
+The TUI uses `ratatui` with `crossterm` in alternate screen mode. The application installs a custom panic hook that restores raw terminal mode, exits alternate screen mode, and resets cursor visibility prior to process exit when a panic occurs.
+
+## Components
+
+- `src/main.rs`: Entry point for integrated dev mode. Spawns an in-process TCP server alongside a TUI client engine.
+- `src/lib.rs`: Defines top-level error types (`WireError`) and module declarations.
+- `src/types.rs`: Contains core domain types, serialization structures, client representations, and room definitions.
+- `src/network/mod.rs`: Defines `NetworkEngine`, `NetworkHandle`, `NetworkCommand`, and `NetworkEvent` primitives.
+- `src/network/framing.rs`: Implements `read_framed_loop` and `write_framed_loop` for length-prefixed byte streaming.
+- `src/network/server_side.rs`: Implements connection acceptance, client registration, roster broadcasting, and message routing.
+- `src/network/client_side.rs`: Manages client connection initialization, handshake completion, and event translation.
+- `src/ui/app.rs`: Maintains layout focus state, active buffers, client lists, selection indices, and scroll offsets.
+- `src/ui/dashboard.rs`: Renders the client sidebar, action pane, chat inbox, room interfaces, and message speech bubbles.
+- `src/ui/ui.rs`: Handles home screen rendering, layout constraints, and toast error notifications.
+- `src/ui/mod.rs`: Executes the main event loop, handles keyboard navigation, enforces terminal dimensions, and processes network events.
+- `src/bin/server.rs`: Executable entry point for running a standalone server instance.
+- `src/bin/client.rs`: Executable entry point for running a standalone client instance connected to an external host.
+
+## Used Libraries
+
+- `tokio`: Asynchronous runtime providing TCP networking (`TcpListener`, `TcpStream`), task execution (`tokio::spawn`), and concurrency primitives (`mpsc`, `Mutex`).
+- `ratatui`: Terminal user interface framework for layouts, widgets, rendering frames, and style modifiers.
+- `crossterm`: Cross-platform terminal control library managing raw mode, input polling, key events, and screen buffers.
+- `bincode`: Binary serialization layout providing compact encoding for wire frames.
+- `serde`: Serialization framework providing derive macros for protocol structures.
+- `thiserror`: Error handling utility for defining structured error enums (`WireError`).
+
+## Usage
+
+### Integrated Development Mode
+
+Launch an in-process server and TUI client interface:
 
 ```bash
 cargo run
 ```
 
-## Architecture
+### Standalone Server
 
-Built on `tokio` async tasks and `ratatui` for the TUI.
+Start a standalone TCP server listening on a specified socket address:
+
+```bash
+cargo run --bin server -- serve 127.0.0.1:8080
+```
+
+If no address parameter is provided, the server defaults to binding to `127.0.0.1:0`.
+
+### Standalone Client
+
+Connect a standalone TUI client to a running server instance:
+
+```bash
+cargo run --bin client -- connect 127.0.0.1:8080 --name Alice
+```
+
+### Navigation Controls
+
+- Up / Down Arrow Keys: Move selection highlight within lists.
+- Left / Right Arrow Keys: Switch focus between sidebar, action lists, and active windows.
+- Enter: Confirm selection or enter text typing mode.
+- Esc: Cancel typing mode or step back in view hierarchy.
+- PageUp / PageDown: Scroll message history up or down.
+- q: Terminate application and restore terminal settings.

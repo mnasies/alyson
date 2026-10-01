@@ -1,0 +1,3 @@
+   Compiling alyson v0.1.0 (/home/mnasie/coding/Rust/alyson)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.97s
+     Running `target/debug/client connect '127.0.0.1:45465' --name alan`
