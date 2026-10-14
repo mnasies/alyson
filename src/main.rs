@@ -1,7 +1,7 @@
-// use alyson::WireError;
+// use alyson::AlysonError;
 use alyson::network::{NetworkHandle, run_network_engine};
 
-use alyson::WireError;
+use alyson::AlysonError;
 use alyson::ui::run;
 use crossterm::{
     execute,
@@ -20,7 +20,7 @@ fn reset_terminal() {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), WireError> {
+async fn main() -> Result<(), AlysonError> {
     // --- channels setup ---
     let (cmd_tx, cmd_rx) = mpsc::channel(100);
     let (event_tx, event_rx) = mpsc::channel(100);

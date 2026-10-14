@@ -1,3 +1,4 @@
+use crate::WireError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::SystemTime;
@@ -39,7 +40,7 @@ pub enum ServerEvent {
     ChatMessage(InboxEntry),
     RoomCreated(Room),
     RoomJoined { client_id: u64, room: Room },
-    Error(String),
+    Error(WireError),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -5,7 +5,7 @@ use client_side::run_client;
 pub mod framing;
 pub mod server_side;
 
-use crate::WireError;
+use crate::AlysonError;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ pub enum NetworkEvent {
     RoomJoined { client_id: u64, room_id: u64 },
     MessageReceived(InboxEntry),
     MyClient { id: u64 },
-    ErrorOccurred(WireError),
+    ErrorOccurred(AlysonError),
 }
 
 #[derive(Clone)]
@@ -43,31 +43,31 @@ impl NetworkHandle {
         NetworkHandle { cmd_tx }
     }
 
-    pub fn spawn_client(&self, name: String) -> Result<(), WireError> {
+    pub fn spawn_client(&self, name: String) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::SpawnClient { username: name })
-            .map_err(|_| WireError::PortNotAvailable)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn send_message(&self, data: InboxEntry) -> Result<(), WireError> {
+    pub fn send_message(&self, data: InboxEntry) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::SendMessage { data })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn create_room(&self, client_id: u64, name: String) -> Result<(), WireError> {
+    pub fn create_room(&self, client_id: u64, name: String) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::CreateRoom {
                 client_id,
                 username: name,
             })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn join_room(&self, client_id: u64, room_id: u64) -> Result<(), WireError> {
+    pub fn join_room(&self, client_id: u64, room_id: u64) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::JoinRoom { client_id, room_id })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 }
 
@@ -141,7 +141,7 @@ impl ClientState {
 pub async fn run_network_engine(
     cmd_rx: Receiver<NetworkCommand>,
     event_tx: Sender<NetworkEvent>,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {

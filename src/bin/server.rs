@@ -1,10 +1,10 @@
-use alyson::WireError;
+use alyson::AlysonError;
 use alyson::network::server_side::run_server;
 use std::env;
 use std::panic;
 
 #[tokio::main]
-async fn main() -> Result<(), WireError> {
+async fn main() -> Result<(), AlysonError> {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
 

@@ -2,7 +2,7 @@ pub mod app;
 mod dashboard;
 pub mod ui;
 
-use crate::WireError;
+use crate::{AlysonError, WireError};
 use crate::network::{NetworkEvent, NetworkHandle};
 pub use app::{App, DashBoardView, Focus, IdentityMode, InputResult};
 use std::time::{Duration, Instant};
@@ -21,7 +21,7 @@ pub async fn run(
     mut event_rx: Receiver<NetworkEvent>,
     identity_mode: u8,
     client_name: String,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let mut main_app = App::new();
     if identity_mode == 1 {
         main_app.screen = app::Screen::Dashboard;
@@ -78,7 +78,7 @@ pub async fn run(
                         KeyCode::Char('e') => {
                             main_app.errors.push((
                                 std::time::Instant::now(),
-                                WireError::HandshakeFailed("test error".to_string()),
+                                AlysonError::Wire(WireError::HandshakeFailed("test error".to_string())),
                             ));
                         }
                         KeyCode::Up => {
@@ -387,7 +387,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     None => {
                         main_app
                             .errors
-                            .push((Instant::now(), WireError::ClientNotFound));
+                            .push((Instant::now(), AlysonError::Wire(WireError::ClientNotFound)));
                     }
                 }
             }
@@ -454,7 +454,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     None => {
                         main_app
                             .errors
-                            .push((Instant::now(), WireError::ClientNotFound));
+                            .push((Instant::now(), AlysonError::Wire(WireError::ClientNotFound)));
                     }
                 }
             }
@@ -489,7 +489,7 @@ fn handle_input(
     main_app: &mut App,
     key: KeyEvent,
     net_handle: &NetworkHandle,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let Some(buf) = main_app.current_input_mut() else {
         return Ok(());
     };
