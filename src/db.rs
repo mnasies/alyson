@@ -1,7 +1,8 @@
+use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::str::FromStr;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use crate::types::{ClientInfo, InboxEntry};
 
@@ -72,6 +73,20 @@ pub async fn init_server_db(database_url: &str) -> Result<SqlitePool, AlysonErro
 }
 
 pub async fn insert_user(client: &ClientInfo, pool: &SqlitePool) -> Result<u64, AlysonError> {
+    // check if user already exists
+    let existing = sqlx::query("SELECT id FROM clients WHERE username = ?1")
+        .bind(&client.username)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    if let Some(row) = existing {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+        return Ok(id as u64);
+    }
+
     let result = sqlx::query("INSERT INTO clients (username) VALUES (?1)")
         .bind(&client.username)
         .execute(pool)
