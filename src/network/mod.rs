@@ -1,6 +1,8 @@
 pub mod client_side;
+use crate::db::init_server_db;
 use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room};
 use client_side::run_client;
+use sqlx::SqlitePool;
 
 pub mod framing;
 pub mod server_side;
@@ -72,6 +74,7 @@ impl NetworkHandle {
 }
 
 pub struct ServerState {
+    pub db: SqlitePool,
     pub clients: Arc<Mutex<HashMap<u64, Client>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
     pub next_id: Arc<atomic::AtomicU64>,
@@ -79,14 +82,16 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    pub async fn new() -> Self {
+    pub async fn new(db: SqlitePool) -> Self {
         ServerState {
+            db,
             clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(atomic::AtomicU64::new(0)),
             next_room_id: Arc::new(atomic::AtomicU64::new(0)),
         }
     }
+
     pub async fn register(&mut self, client: Client) {
         self.clients.lock().await.insert(client.id, client);
     }
@@ -160,8 +165,11 @@ pub async fn run_network_engine(
             );
         }
     };
+    // initiate the server db
+    let pool = init_server_db("sqlite://alyson.db").await?;
+
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new().await);
+    let server_state = Arc::new(ServerState::new(pool).await);
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);

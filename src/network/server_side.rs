@@ -1,3 +1,4 @@
+use crate::db::init_server_db;
 use crate::network::{ServerState, framing};
 use crate::types::{Client, ClientInfo, ClientRequest, Room, ServerEvent};
 use crate::{AlysonError, WireError};
@@ -40,8 +41,11 @@ pub async fn run_server(addr: String) -> Result<String, AlysonError> {
         }
     };
     println!("Server started on {}", server_addr.clone());
+    // initiate the server db
+    let pool = init_server_db("sqlite://alyson.db").await?;
+
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new().await);
+    let server_state = Arc::new(ServerState::new(pool).await);
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
