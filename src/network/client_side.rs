@@ -200,48 +200,51 @@ pub async fn spawn_client_task(
     // Client-side reader task
     tokio::spawn(async move {
         let event_tx_entry = event_tx_reader.clone();
-        let handle_entry = async move |msg: ServerEvent| match msg {
-            ServerEvent::ChatMessage(entry) => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::MessageReceived(entry))
-                    .await;
-            }
-            ServerEvent::PeerJoined(client_info) => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::ClientConnected(client_info))
-                    .await;
-            }
-            ServerEvent::Roster(clients) => {
-                for client in clients {
+        let handle_entry = async move |msg: ServerEvent| -> Result<(), AlysonError> {
+            match msg {
+                ServerEvent::ChatMessage(entry) => {
                     let _ = event_tx_entry
-                        .send(NetworkEvent::ClientConnected(client))
+                        .send(NetworkEvent::MessageReceived(entry))
                         .await;
                 }
+                ServerEvent::PeerJoined(client_info) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ClientConnected(client_info))
+                        .await;
+                }
+                ServerEvent::Roster(clients) => {
+                    for client in clients {
+                        let _ = event_tx_entry
+                            .send(NetworkEvent::ClientConnected(client))
+                            .await;
+                    }
+                }
+                ServerEvent::ClientDisconnected(id) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ClientDisconnected { id })
+                        .await;
+                }
+                ServerEvent::RoomCreated(room) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomCreated { room })
+                        .await;
+                }
+                ServerEvent::RoomJoined { client_id, room } => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::RoomJoined {
+                            client_id,
+                            room_id: room.id,
+                        })
+                        .await;
+                }
+                ServerEvent::Error(err) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ErrorOccurred(AlysonError::Wire(err)))
+                        .await;
+                }
+                _ => {}
             }
-            ServerEvent::ClientDisconnected(id) => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::ClientDisconnected { id })
-                    .await;
-            }
-            ServerEvent::RoomCreated(room) => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::RoomCreated { room })
-                    .await;
-            }
-            ServerEvent::RoomJoined { client_id, room } => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::RoomJoined {
-                        client_id,
-                        room_id: room.id,
-                    })
-                    .await;
-            }
-            ServerEvent::Error(err) => {
-                let _ = event_tx_entry
-                    .send(NetworkEvent::ErrorOccurred(AlysonError::Wire(err)))
-                    .await;
-            }
-            _ => {}
+            Ok(())
         };
         let event_tx_error = event_tx_reader.clone();
         let handle_error = async move |e: AlysonError| {

@@ -77,7 +77,6 @@ pub struct ServerState {
     pub db: SqlitePool,
     pub clients: Arc<Mutex<HashMap<u64, Client>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
-    pub next_id: Arc<atomic::AtomicU64>,
     pub next_room_id: Arc<atomic::AtomicU64>,
 }
 
@@ -87,7 +86,6 @@ impl ServerState {
             db,
             clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(atomic::AtomicU64::new(0)),
             next_room_id: Arc::new(atomic::AtomicU64::new(0)),
         }
     }
@@ -102,10 +100,6 @@ impl ServerState {
 
     pub async fn get(&self, id: u64) -> Option<Client> {
         self.clients.lock().await.get(&id).cloned()
-    }
-
-    pub fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, atomic::Ordering::SeqCst)
     }
 
     pub fn next_room_id(&self) -> u64 {

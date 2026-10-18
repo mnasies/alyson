@@ -200,10 +200,10 @@ fn draw_inbox_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         .inboxes
         .iter()
         .filter(|e| {
-            (e.from == sender_id as u64 && e.to == receiver_id as u64 && e.cli_or_room == true)
+            (e.from == sender_id as u64 && e.to == receiver_id as u64 && e.is_to_client == true)
                 || (e.from == receiver_id as u64
                     && e.to == sender_id as u64
-                    && e.cli_or_room == true)
+                    && e.is_to_client == true)
         })
         .collect();
     convo.sort_by_key(|e| e.time);
@@ -319,7 +319,7 @@ fn draw_room_window(frame: &mut Frame, canvas: Rect, app: &mut App) {
         let mut convo: Vec<&InboxEntry> = app
             .inboxes
             .iter()
-            .filter(|e| e.to == room_id as u64 && e.cli_or_room == false)
+            .filter(|e| e.to == room_id as u64 && e.is_to_client == false)
             .collect();
         convo.sort_by_key(|e| e.time);
 

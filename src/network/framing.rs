@@ -5,7 +5,7 @@ use tokio::sync::mpsc::Receiver;
 
 pub async fn read_framed_loop<R, T, E>(
     mut reader: R,
-    on_entry: impl AsyncFn(T),
+    on_entry: impl AsyncFn(T) -> Result<(), AlysonError>,
     on_error: impl AsyncFn(E),
 ) where
     R: AsyncReadExt + Unpin,
@@ -51,7 +51,9 @@ pub async fn read_framed_loop<R, T, E>(
             }
         };
 
-        on_entry(msg).await;
+        if let Err(e) = on_entry(msg).await {
+            on_error(E::from(e)).await;
+        }
     }
 }
 

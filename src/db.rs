@@ -1,10 +1,13 @@
 use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::str::FromStr;
 use std::time::Duration;
+use std::time::UNIX_EPOCH;
 
-use crate::types::{ClientInfo, InboxEntry};
+use crate::types::InboxEntry;
 
 use crate::AlysonError;
 
@@ -72,10 +75,34 @@ pub async fn init_server_db(database_url: &str) -> Result<SqlitePool, AlysonErro
     Ok(pool)
 }
 
-pub async fn insert_user(client: &ClientInfo, pool: &SqlitePool) -> Result<u64, AlysonError> {
+pub async fn insert_room(name: &str, pool: &SqlitePool) -> Result<u64, AlysonError> {
+    // check if user already exists
+    let existing = sqlx::query("SELECT id FROM rooms WHERE name = ?1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    if let Some(row) = existing {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+        return Ok(id as u64);
+    }
+
+    let result = sqlx::query("INSERT INTO rooms (name) VALUES (?1)")
+        .bind(name)
+        .execute(pool)
+        .await
+        .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    Ok(result.last_insert_rowid() as u64)
+}
+
+pub async fn insert_user(username: &str, pool: &SqlitePool) -> Result<u64, AlysonError> {
     // check if user already exists
     let existing = sqlx::query("SELECT id FROM clients WHERE username = ?1")
-        .bind(&client.username)
+        .bind(username)
         .fetch_optional(pool)
         .await
         .map_err(|e| AlysonError::Database(e.to_string()))?;
@@ -88,7 +115,7 @@ pub async fn insert_user(client: &ClientInfo, pool: &SqlitePool) -> Result<u64, 
     }
 
     let result = sqlx::query("INSERT INTO clients (username) VALUES (?1)")
-        .bind(&client.username)
+        .bind(username)
         .execute(pool)
         .await
         .map_err(|e| AlysonError::Database(e.to_string()))?;
@@ -103,11 +130,11 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
         .unwrap_or_default()
         .as_secs() as i64;
 
-    if message.cli_or_room {
+    if message.is_to_client {
         sqlx::query("INSERT INTO messages (sender_id, recipient_client_id, is_to_client, message, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)")
             .bind(message.from as i64)
             .bind(message.to as i64)
-            .bind(message.cli_or_room)
+            .bind(message.is_to_client)
             .bind(&message.msg)
             .bind(ts)
             .execute(pool)
@@ -117,7 +144,7 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
         sqlx::query("INSERT INTO messages (sender_id, recipient_room_id, is_to_client, message, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)")
             .bind(message.from as i64)
             .bind(message.to as i64)
-            .bind(message.cli_or_room)
+            .bind(message.is_to_client)
             .bind(&message.msg)
             .bind(ts)
             .execute(pool)
@@ -126,4 +153,69 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
     }
 
     Ok(())
+}
+
+pub async fn fetch_users(pool: &SqlitePool)
+-> Result<HashMap<u64, ClientInfo>, AlysonError> {
+    
+}
+
+
+pub async fn fetch_history_for_user(
+    client_id: u64,
+    pool: &SqlitePool,
+) -> Result<HashMap<u64, InboxEntry>, AlysonError> {
+    let rows = sqlx::query("
+        SELECT id, sender_id, recipient_client_id, recipient_room_id, is_to_client, message, timestamp
+        FROM messages
+        WHERE is_to_client = 1
+          AND (sender_id = ?1 OR recipient_client_id = ?1)
+    ")
+    .bind(client_id as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    let mut history = HashMap::new();
+
+    for row in rows {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let sender_id: i64 = row
+            .try_get("sender_id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let recipient_id: i64 = row
+            .try_get("recipient_client_id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let is_to_client: bool = row
+            .try_get("is_to_client")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let msg: String = row
+            .try_get("message")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let timestamp: i64 = row
+            .try_get("timestamp")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+
+        history.insert(
+            id as u64,
+            InboxEntry::new(
+                time,
+                msg,
+                sender_id as u64,
+                recipient_id as u64,
+                is_to_client,
+            ),
+        );
+    }
+
+    Ok(history)
 }
