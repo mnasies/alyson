@@ -45,7 +45,22 @@ pub async fn run_server(addr: String) -> Result<String, AlysonError> {
     let pool = db::init_server_db("sqlite://alyson.db").await?;
 
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new(pool).await);
+    let server_state = Arc::new(ServerState::new(pool.clone()).await);
+
+    // Fetch existing clients from db
+    let users = db::fetch_users(&pool).await?;
+
+    for (id, username) in users {
+        server_state.register_tmp_client(id, username).await;
+    }
+
+    // fetch message history from db
+    for (key, _) in server_state.tmp_clients.lock().await.iter() {
+        let message = db::fetch_history_for_user(*key, &pool).await?;
+        for msg in message.values() {
+            server_state.add_inbox(msg.clone()).await;
+        }
+    }
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
@@ -132,6 +147,16 @@ pub async fn handle_incoming_connection(
     }
     if let Some(writer) = &client.writer {
         let _ = writer.send(ServerEvent::Roster(roster)).await;
+    }
+
+    // send a message history associated with the client to the client
+    for msg in server_state.inboxes.lock().await.iter() {
+        // check if the message is to client and the client is either the sender or receiver
+        if msg.is_to_client && (msg.to == client_id || msg.from == client_id) {
+            if let Some(writer) = &client.writer {
+                let _ = writer.send(ServerEvent::ChatMessage(msg.clone())).await;
+            }
+        }
     }
 
     // push the new client to the clients list

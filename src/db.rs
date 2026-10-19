@@ -2,7 +2,6 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::str::FromStr;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
@@ -155,11 +154,33 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
     Ok(())
 }
 
-pub async fn fetch_users(pool: &SqlitePool)
--> Result<HashMap<u64, ClientInfo>, AlysonError> {
-    
-}
+pub async fn fetch_users(pool: &SqlitePool) -> Result<HashMap<u64, String>, AlysonError> {
+    let rows = sqlx::query(
+        "
+        SELECT id, username, created_at
+        FROM clients
+    ",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AlysonError::Database(e.to_string()))?;
 
+    let mut clients = HashMap::new();
+
+    for row in rows {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let username: String = row
+            .try_get("username")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        clients.insert(id as u64, username);
+    }
+
+    Ok(clients)
+}
 
 pub async fn fetch_history_for_user(
     client_id: u64,
