@@ -77,7 +77,6 @@ pub struct ServerState {
     pub db: SqlitePool,
     pub clients: Arc<Mutex<HashMap<u64, Client>>>,
     pub tmp_clients: Arc<Mutex<HashMap<u64, String>>>,
-    pub inboxes: Arc<Mutex<Vec<InboxEntry>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
     pub next_room_id: Arc<atomic::AtomicU64>,
 }
@@ -88,7 +87,6 @@ impl ServerState {
             db,
             clients: Arc::new(Mutex::new(HashMap::new())),
             tmp_clients: Arc::new(Mutex::new(HashMap::new())),
-            inboxes: Arc::new(Mutex::new(Vec::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
             next_room_id: Arc::new(atomic::AtomicU64::new(0)),
         }
@@ -100,10 +98,6 @@ impl ServerState {
 
     pub async fn register(&mut self, client: Client) {
         self.clients.lock().await.insert(client.id, client);
-    }
-
-    pub async fn add_inbox(&self, msg: InboxEntry) {
-        self.inboxes.lock().await.push(msg);
     }
 
     pub async fn remove(&mut self, id: u64) {

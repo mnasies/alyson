@@ -54,14 +54,6 @@ pub async fn run_server(addr: String) -> Result<String, AlysonError> {
         server_state.register_tmp_client(id, username).await;
     }
 
-    // fetch message history from db
-    for (key, _) in server_state.tmp_clients.lock().await.iter() {
-        let message = db::fetch_history_for_user(*key, &pool).await?;
-        for msg in message.values() {
-            server_state.add_inbox(msg.clone()).await;
-        }
-    }
-
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
     // Server-side task that accepts incoming connections
@@ -149,10 +141,10 @@ pub async fn handle_incoming_connection(
         let _ = writer.send(ServerEvent::Roster(roster)).await;
     }
 
-    // send a message history associated with the client to the client
-    for msg in server_state.inboxes.lock().await.iter() {
-        // check if the message is to client and the client is either the sender or receiver
-        if msg.is_to_client && (msg.to == client_id || msg.from == client_id) {
+    // fetch the db for the message history of the client
+    let messages = db::fetch_history_for_user(client_id, &server_state.db).await?;
+    for (_, msg) in messages {
+        if msg.to == client_id || msg.from == client_id {
             if let Some(writer) = &client.writer {
                 let _ = writer.send(ServerEvent::ChatMessage(msg.clone())).await;
             }
