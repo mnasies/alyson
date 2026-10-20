@@ -141,6 +141,16 @@ pub async fn handle_incoming_connection(
         let _ = writer.send(ServerEvent::Roster(roster)).await;
     }
 
+    // Notify to the new client the list of all existing rooms
+
+    for (_, room) in rooms.lock().await.iter() {
+        if let Some(writer) = &client.writer {
+            let _ = writer.send(ServerEvent::RoomCreated(room.clone())).await;
+        }
+    }
+
+    
+
     // fetch the db for the message history of the client
     let messages = db::fetch_history_for_user(client_id, &server_state.db).await?;
     for (_, msg) in messages {
