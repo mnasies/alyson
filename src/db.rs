@@ -2,11 +2,12 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 
-use crate::types::InboxEntry;
+use crate::types::{InboxEntry, Room};
 
 use crate::AlysonError;
 
@@ -152,6 +153,127 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
     }
 
     Ok(())
+}
+
+pub async fn fetch_rooms(pool: &SqlitePool) -> Result<HashMap<u64, Room>, AlysonError> {
+    let rows = sqlx::query(
+        "
+        SELECT id, name, owner_id
+        FROM rooms
+    ",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    let mut rooms = HashMap::new();
+
+    for row in rows {
+        // fetch necessary info from db and create room
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let members_rows = sqlx::query(
+            "
+                SELECT user_id
+                FROM room_members
+                WHERE room_id = ?1
+            ",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let name: String = row
+            .try_get("name")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let owner: i64 = row
+            .try_get("owner_id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let mut room = Room::new(id as u64, name, owner as u64);
+
+        // fetch all members from db
+
+        let mut members: HashSet<i64> = HashSet::new();
+
+        for mem in members_rows {
+            let mem_id: i64 = mem
+                .try_get("user_id")
+                .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+            members.insert(mem_id);
+        }
+
+        for member in members {
+            room.add_member(member as u64);
+        }
+
+        rooms.insert(id as u64, room);
+    }
+
+    Ok(rooms)
+}
+
+pub async fn fetch_history_for_room(
+    room_id: u64,
+    pool: &SqlitePool,
+) -> Result<HashMap<u64, InboxEntry>, AlysonError> {
+    let rows = sqlx::query("
+        SELECT id, sender_id, recipient_client_id, recipient_room_id, is_to_client, message, timestamp
+        FROM messages
+        WHERE is_to_client = 0
+    ")
+    .bind(room_id as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    let mut history = HashMap::new();
+
+    for row in rows {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let sender_id: i64 = row
+            .try_get("sender_id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let recipient_id: i64 = row
+            .try_get("recipient_room_id")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let is_to_client: bool = row
+            .try_get("is_to_client")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let msg: String = row
+            .try_get("message")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let timestamp: i64 = row
+            .try_get("timestamp")
+            .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+        let time = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
+
+        history.insert(
+            id as u64,
+            InboxEntry::new(
+                time,
+                msg,
+                sender_id as u64,
+                recipient_id as u64,
+                is_to_client,
+            ),
+        );
+    }
+
+    Ok(history)
 }
 
 pub async fn fetch_users(pool: &SqlitePool) -> Result<HashMap<u64, String>, AlysonError> {
