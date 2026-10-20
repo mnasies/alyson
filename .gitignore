@@ -27,3 +27,8 @@ repomix-output.xml
 # Added by cargo
 
 /target
+
+# db files
+*.db
+*.db-shm
+*.db-wal
