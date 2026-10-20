@@ -156,6 +156,21 @@ pub async fn insert_messages(message: &InboxEntry, pool: &SqlitePool) -> Result<
     Ok(())
 }
 
+pub async fn insert_member_to_room(
+    client_id: i64,
+    room_id: i64,
+    pool: &SqlitePool,
+) -> Result<(), AlysonError> {
+    sqlx::query("INSERT INTO room_members (room_id, user_id) VALUES (?1, ?2)")
+        .bind(room_id)
+        .bind(client_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AlysonError::Database(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn fetch_rooms(pool: &SqlitePool) -> Result<HashMap<u64, Room>, AlysonError> {
     let rows = sqlx::query(
         "

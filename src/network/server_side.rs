@@ -265,6 +265,9 @@ pub async fn handle_incoming_connection(
                             }
                         }
                     }
+                    // save the info to db
+                    db::insert_member_to_room(client_id as i64, room_id as i64, &ss_clone.db)
+                        .await?;
                 }
             }
             Ok(())
