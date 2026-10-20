@@ -149,10 +149,18 @@ pub async fn handle_incoming_connection(
     }
 
     // Notify to the new client the list of all existing rooms
+    // Also with that notify the chat history of the rooms
 
     for (_, room) in rooms.lock().await.iter() {
         if let Some(writer) = &client.writer {
             let _ = writer.send(ServerEvent::RoomCreated(room.clone())).await;
+        }
+
+        let messages = db::fetch_history_for_room(room.id, &server_state.db).await?;
+        for (_, msg) in messages {
+            if let Some(writer) = &client.writer {
+                let _ = writer.send(ServerEvent::ChatMessage(msg)).await;
+            }
         }
     }
 
@@ -161,7 +169,7 @@ pub async fn handle_incoming_connection(
     for (_, msg) in messages {
         if msg.to == client_id || msg.from == client_id {
             if let Some(writer) = &client.writer {
-                let _ = writer.send(ServerEvent::ChatMessage(msg.clone())).await;
+                let _ = writer.send(ServerEvent::ChatMessage(msg)).await;
             }
         }
     }
@@ -225,10 +233,12 @@ pub async fn handle_incoming_connection(
                         &server_state_clone.db,
                     )
                     .await?;
+
+                    // save the info to in-memory server-state storage
                     let new_room = Room::new(id, username.clone(), client_id);
                     rooms_reader.lock().await.insert(id, new_room.clone());
 
-                    // Notify all clients of the newly created to room
+                    // Notify all clients of the newly created room
                     for (_, client) in clients_reader_clone.lock().await.iter() {
                         let Some(writer) = &client.writer else {
                             continue;

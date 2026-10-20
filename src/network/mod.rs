@@ -8,6 +8,7 @@ pub mod framing;
 pub mod server_side;
 
 use crate::AlysonError;
+use crate::db;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -166,7 +167,21 @@ pub async fn run_network_engine(
     let pool = init_server_db("sqlite://alyson.db").await?;
 
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new(pool).await);
+    let server_state = Arc::new(ServerState::new(pool.clone()).await);
+
+    // Fetch existing clients from db
+    let users = db::fetch_users(&pool).await?;
+
+    for (id, username) in users {
+        server_state.register_tmp_client(id, username).await;
+    }
+
+    // fetch existing rooms from db
+    let rooms = db::fetch_rooms(&pool).await?;
+
+    for (_, room) in rooms {
+        server_state.register_room(room).await;
+    }
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);

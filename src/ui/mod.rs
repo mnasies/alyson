@@ -2,8 +2,8 @@ pub mod app;
 mod dashboard;
 pub mod ui;
 
-use crate::{AlysonError, WireError};
 use crate::network::{NetworkEvent, NetworkHandle};
+use crate::{AlysonError, WireError};
 pub use app::{App, DashBoardView, Focus, IdentityMode, InputResult};
 use std::time::{Duration, Instant};
 use ui::{draw_error_toast, ui};
@@ -78,7 +78,9 @@ pub async fn run(
                         KeyCode::Char('e') => {
                             main_app.errors.push((
                                 std::time::Instant::now(),
-                                AlysonError::Wire(WireError::HandshakeFailed("test error".to_string())),
+                                AlysonError::Wire(WireError::HandshakeFailed(
+                                    "test error".to_string(),
+                                )),
                             ));
                         }
                         KeyCode::Up => {
@@ -426,7 +428,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     Some(n) => n,
                     None => 0,
                 };
-                let last_index = main_app.clients.len().saturating_sub(1);
+                let last_index = main_app.rooms.len().saturating_sub(1);
                 if cli < last_index {
                     main_app.selected.room_list_selected = Some(cli + 1);
                 }
