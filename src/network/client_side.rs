@@ -1,3 +1,4 @@
+use crate::AlysonError;
 use crate::WireError;
 use crate::network::{ClientState, NetworkCommand, NetworkEvent, framing};
 use crate::types::{Client, ClientInfo, ClientRequest, ServerEvent};
@@ -13,16 +14,8 @@ pub async fn run_client(
     event_tx: Sender<NetworkEvent>,
     mut cmd_rx: Receiver<NetworkCommand>,
     server_addr: String,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let client_state = Arc::new(Mutex::new(ClientState::new(event_tx.clone()).await));
-
-    // let (clients, rooms) = {
-    //     let client_state_lock = client_state.lock().await;
-    //     (
-    //         Arc::clone(&client_state_lock.clients),
-    //         Arc::clone(&client_state_lock.rooms),
-    //     )
-    // };
 
     // Handle UI commands
     while let Some(cmd) = cmd_rx.recv().await {
@@ -55,7 +48,9 @@ pub async fn run_client(
                     }
                     None => {
                         let _ = event_tx
-                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .send(NetworkEvent::ErrorOccurred(AlysonError::ChannelFailure(
+                                "sender channel not found".to_string(),
+                            )))
                             .await;
                     }
                 }
@@ -84,7 +79,9 @@ pub async fn run_client(
                     }
                     None => {
                         let _ = event_tx
-                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .send(NetworkEvent::ErrorOccurred(AlysonError::ChannelFailure(
+                                "sender channel not found".to_string(),
+                            )))
                             .await;
                     }
                 }
@@ -105,7 +102,9 @@ pub async fn run_client(
                     }
                     None => {
                         let _ = event_tx
-                            .send(NetworkEvent::ErrorOccurred(WireError::ChannelNotFound))
+                            .send(NetworkEvent::ErrorOccurred(AlysonError::ChannelFailure(
+                                "sender channel not found".to_string(),
+                            )))
                             .await;
                     }
                 }
@@ -120,7 +119,7 @@ pub async fn spawn_client_task(
     username: String,
     server_addr: String,
     client_state: Arc<Mutex<ClientState>>,
-) -> Result<Client, WireError> {
+) -> Result<Client, AlysonError> {
     use AsyncWriteExt;
 
     let (clients, event_tx) = {
@@ -144,13 +143,16 @@ pub async fn spawn_client_task(
     let mut reader = BufReader::new(read_half);
     let mut client_id = String::new();
     reader.read_line(&mut client_id).await?;
-    let client_id: u64 = client_id.trim().parse().unwrap();
+    let client_id: u64 = client_id
+        .trim()
+        .parse()
+        .map_err(|e| AlysonError::Internal(format!("failed to parse client_id: {}", e)))?;
 
     // Send the client ID back to the UI side
     event_tx
         .send(NetworkEvent::MyClient { id: client_id })
         .await
-        .map_err(|_| WireError::ChannelNotFound)?;
+        .map_err(|e| AlysonError::ChannelFailure(e.to_string()))?;
 
     // Add the client to the clients list
     {
@@ -177,7 +179,7 @@ pub async fn spawn_client_task(
                 client.port,
             )
         } else {
-            return Err(WireError::ClientNotFound);
+            return Err(AlysonError::Wire(WireError::ClientNotFound));
         }
     };
 
@@ -198,39 +200,23 @@ pub async fn spawn_client_task(
     // Client-side reader task
     tokio::spawn(async move {
         let event_tx_entry = event_tx_reader.clone();
-        let handle_entry = async move |msg: ServerEvent| {
+        let handle_entry = async move |msg: ServerEvent| -> Result<(), AlysonError> {
             match msg {
                 ServerEvent::ChatMessage(entry) => {
-                    // 5. Forward to UI / Event handler
-                    if event_tx_entry
+                    let _ = event_tx_entry
                         .send(NetworkEvent::MessageReceived(entry))
-                        .await
-                        .is_err()
-                    {
-                        // Channel receiver was dropped (UI closed/shutdown)
-                        return;
-                    }
+                        .await;
                 }
                 ServerEvent::PeerJoined(client_info) => {
-                    if event_tx_entry
+                    let _ = event_tx_entry
                         .send(NetworkEvent::ClientConnected(client_info))
-                        .await
-                        .is_err()
-                    {
-                        // Channel receiver was dropped (UI closed/shutdown)
-                        return;
-                    }
+                        .await;
                 }
                 ServerEvent::Roster(clients) => {
                     for client in clients {
-                        if event_tx_entry
+                        let _ = event_tx_entry
                             .send(NetworkEvent::ClientConnected(client))
-                            .await
-                            .is_err()
-                        {
-                            // Channel receiver was dropped (UI closed/shutdown)
-                            return;
-                        }
+                            .await;
                     }
                 }
                 ServerEvent::ClientDisconnected(id) => {
@@ -251,18 +237,19 @@ pub async fn spawn_client_task(
                         })
                         .await;
                 }
-                // ServerEvent::Error(err) => {
-                //     let _ = event_tx_entry.send(NetworkEvent::ErrorOccurred(err)).await;
-                // }
+                ServerEvent::Error(err) => {
+                    let _ = event_tx_entry
+                        .send(NetworkEvent::ErrorOccurred(AlysonError::Wire(err)))
+                        .await;
+                }
                 _ => {}
             }
+            Ok(())
         };
         let event_tx_error = event_tx_reader.clone();
-        let handle_error = async move |e: WireError| match e {
-            e => {
-                eprintln!("client reader error: {:?}", e);
-                let _ = event_tx_error.send(NetworkEvent::ErrorOccurred(e)).await;
-            }
+        let handle_error = async move |e: AlysonError| {
+            eprintln!("client reader error: {:?}", e);
+            let _ = event_tx_error.send(NetworkEvent::ErrorOccurred(e)).await;
         };
         framing::read_framed_loop(reader, handle_entry, handle_error).await;
 
@@ -276,11 +263,9 @@ pub async fn spawn_client_task(
 
     // Client-side writer task
     tokio::spawn(async move {
-        let handle_error = async move |e: WireError| match e {
-            e => {
-                eprintln!("client reader error: {:?}", e);
-                let _ = event_tx_writer.send(NetworkEvent::ErrorOccurred(e)).await;
-            }
+        let handle_error = async move |e: AlysonError| {
+            eprintln!("client writer error: {:?}", e);
+            let _ = event_tx_writer.send(NetworkEvent::ErrorOccurred(e)).await;
         };
         framing::write_framed_loop(writer, cmd_rx, handle_error).await;
     });

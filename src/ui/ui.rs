@@ -55,10 +55,10 @@ pub fn draw_error_toast(frame: &mut Frame, app: &App) {
     if let Some(latest) = errors.last() {
         let area = frame.area();
         let toast_area = Rect {
-            x: area.width.saturating_sub(40),
+            x: area.width.saturating_sub(200),
             y: 0,
-            width: 40.min(area.width),
-            height: 3,
+            width: 200.min(area.width),
+            height: 4,
         };
         let block = Block::default()
             .title(" Error ")

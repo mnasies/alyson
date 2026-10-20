@@ -1,63 +1,82 @@
+pub mod db;
 pub mod network;
 pub mod types;
 pub mod ui;
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 
 pub const MIN_WIDTH: u16 = 80;
 pub const MIN_HEIGHT: u16 = 20;
 
-#[derive(Debug, Clone, Error)]
+/// Errors serialized and transmitted over the network between peers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
 pub enum WireError {
-    #[error("io error: {0}")]
-    Io(Arc<std::io::Error>),
-
     #[error("invalid name")]
     InvalidName,
 
     #[error("handshake failed: {0}")]
     HandshakeFailed(String),
 
-    #[error("TCP connection failed: {0}")]
-    TcpConnectionFailed(Arc<std::io::Error>),
-
     #[error("disconnected")]
     Disconnected,
-
-    #[error("port not available")]
-    PortNotAvailable,
 
     #[error("client registration timeout")]
     ClientRegistrationTimeout,
 
-    #[error("serialization failed")]
-    SerializationFailed,
-
     #[error("payload too large")]
     PayloadTooLarge,
-
-    #[error("channel not found")]
-    ChannelNotFound,
-
-    #[error("sender not found")]
-    SenderNotFound,
-
-    #[error("receiver not found")]
-    ReceiverNotFound,
 
     #[error("client not found")]
     ClientNotFound,
 
-    #[error("channel failure")]
-    ChannelFailure,
+    #[error("room not found")]
+    RoomNotFound,
 
-    #[error("invalid args")]
-    InvalidArgs,
+    #[error("not a room member")]
+    NotRoomMember,
+
+    #[error("serialization failed")]
+    SerializationFailed,
+
+    #[error("internal server error")]
+    InternalServerError,
+
+    #[error(" server failure: {0}")]
+    DatabaseFailure(String),
 }
 
-impl From<std::io::Error> for WireError {
+/// Node-internal operational and runtime errors (never transmitted raw across the wire).
+#[derive(Debug, Clone, Error)]
+pub enum AlysonError {
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+
+    #[error("TCP connection failed: {0}")]
+    TcpConnectionFailed(Arc<std::io::Error>),
+
+    #[error("database error: {0}")]
+    Database(String),
+
+    #[error("serialization failed: {0}")]
+    Serialization(String),
+
+    #[error("channel failure: {0}")]
+    ChannelFailure(String),
+
+    #[error("port not available")]
+    PortNotAvailable,
+
+    #[error("wire protocol error: {0}")]
+    Wire(#[from] WireError),
+
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+impl From<std::io::Error> for AlysonError {
     fn from(e: std::io::Error) -> Self {
-        WireError::Io(Arc::new(e))
+        AlysonError::Io(Arc::new(e))
     }
 }

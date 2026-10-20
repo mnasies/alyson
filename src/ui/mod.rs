@@ -2,8 +2,8 @@ pub mod app;
 mod dashboard;
 pub mod ui;
 
-use crate::WireError;
 use crate::network::{NetworkEvent, NetworkHandle};
+use crate::{AlysonError, WireError};
 pub use app::{App, DashBoardView, Focus, IdentityMode, InputResult};
 use std::time::{Duration, Instant};
 use ui::{draw_error_toast, ui};
@@ -21,7 +21,7 @@ pub async fn run(
     mut event_rx: Receiver<NetworkEvent>,
     identity_mode: u8,
     client_name: String,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let mut main_app = App::new();
     if identity_mode == 1 {
         main_app.screen = app::Screen::Dashboard;
@@ -78,7 +78,9 @@ pub async fn run(
                         KeyCode::Char('e') => {
                             main_app.errors.push((
                                 std::time::Instant::now(),
-                                WireError::HandshakeFailed("test error".to_string()),
+                                AlysonError::Wire(WireError::HandshakeFailed(
+                                    "test error".to_string(),
+                                )),
                             ));
                         }
                         KeyCode::Up => {
@@ -387,7 +389,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     None => {
                         main_app
                             .errors
-                            .push((Instant::now(), WireError::ClientNotFound));
+                            .push((Instant::now(), AlysonError::Wire(WireError::ClientNotFound)));
                     }
                 }
             }
@@ -426,7 +428,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     Some(n) => n,
                     None => 0,
                 };
-                let last_index = main_app.clients.len().saturating_sub(1);
+                let last_index = main_app.rooms.len().saturating_sub(1);
                 if cli < last_index {
                     main_app.selected.room_list_selected = Some(cli + 1);
                 }
@@ -454,7 +456,7 @@ fn handle_dashboard_events(key: KeyEvent, main_app: &mut App, net_handle: &Netwo
                     None => {
                         main_app
                             .errors
-                            .push((Instant::now(), WireError::ClientNotFound));
+                            .push((Instant::now(), AlysonError::Wire(WireError::ClientNotFound)));
                     }
                 }
             }
@@ -489,7 +491,7 @@ fn handle_input(
     main_app: &mut App,
     key: KeyEvent,
     net_handle: &NetworkHandle,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let Some(buf) = main_app.current_input_mut() else {
         return Ok(());
     };

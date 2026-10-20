@@ -1,4 +1,4 @@
-use crate::WireError;
+use crate::AlysonError;
 use crate::network::NetworkHandle;
 use crate::types::{ClientInfo, InboxEntry, Room};
 use std::time::Instant;
@@ -111,7 +111,7 @@ pub struct App {
     pub action_state: ActionState,
     pub buf: AppBuf,
     pub focus: Focus,
-    pub errors: Vec<(Instant, WireError)>,
+    pub errors: Vec<(Instant, AlysonError)>,
     pub inboxes: Vec<InboxEntry>,
     pub current_clients: (Option<u64>, Option<u64>), // (current sender client, current receiver client)
     pub current_room: Option<u64>,
@@ -142,50 +142,34 @@ impl App {
     }
 
     pub fn current_input_mut(&mut self) -> Option<&mut String> {
-        match self.action_state {
-            ActionState::None => Some(&mut self.buf.new_client_name),
-            ActionState::SendMessage | ActionState::SendMessageToRoom => {
-                Some(&mut self.buf.msg_to_client)
-            }
-            ActionState::CreateChatRoom(_) => Some(&mut self.buf.new_room_name),
+        match self.focus {
+            Focus::ClientOption => match self.selected.cli_opt_selected {
+                Some(0) => Some(&mut self.buf.new_room_name),
+                Some(1) => Some(&mut self.buf.new_client_name),
+                _ => None,
+            },
+            Focus::InboxWindow => Some(&mut self.buf.msg_to_client),
+            Focus::RoomboxWindow => Some(&mut self.buf.msg_to_client),
             _ => None,
         }
     }
 
-    pub fn verify_current_room_member(&mut self) -> bool {
-        if let Some(room_id) = self.current_room {
-            if let Some(room) = self.rooms.iter().find(|room| room.id == room_id) {
-                if let Some(cli_id) = self.current_clients.0 {
-                    if room.is_member(cli_id as u64) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    pub fn verify_current_room_member(&self) -> bool {
+        let (Some(cli_id), Some(room_id)) = (self.current_clients.0, self.current_room) else {
+            return false;
+        };
+        let Some(room) = self.rooms.iter().find(|room| room.id == room_id) else {
+            return false;
+        };
+        room.is_member(cli_id)
     }
 
-    pub fn verify_client(&mut self, name: String) -> Result<usize, WireError> {
-        if name.is_empty() {
-            return Err(WireError::InvalidName);
-        } else {
-            for client in self.clients.iter() {
-                if name == client.username {
-                    return Ok(client.id as usize);
-                }
-            }
-        }
-        Err(WireError::InvalidName)
-    }
-
-    pub fn advance_action(&mut self, net_handle: &NetworkHandle) -> Result<(), WireError> {
-        let action_state = self.action_state.clone();
-        match &action_state {
+    pub fn advance_action(&mut self, net_handle: &NetworkHandle) -> Result<(), AlysonError> {
+        match &self.action_state {
             ActionState::None => {
                 let name = self.buf.new_client_name.trim().to_string();
                 self.input_mode = InputMode::Selecting;
                 if !name.is_empty() {
-                    // actually create the client — network call, next
                     net_handle.spawn_client(name)?;
                 }
                 self.buf.new_client_name.clear();
@@ -194,7 +178,6 @@ impl App {
                 let name = self.buf.new_room_name.trim().to_string();
                 self.input_mode = InputMode::Selecting;
                 if !name.is_empty() {
-                    // actually create the client — network call, next
                     net_handle.create_room(*id, name)?;
                 }
                 self.buf.new_room_name.clear();
@@ -206,8 +189,10 @@ impl App {
                         Some(id) => id,
                         None => {
                             self.input_mode = InputMode::Selecting;
-                            self.errors
-                                .push((std::time::Instant::now(), WireError::SenderNotFound));
+                            self.errors.push((
+                                std::time::Instant::now(),
+                                AlysonError::Internal("sender not found".to_string()),
+                            ));
                             return Ok(());
                         }
                     };
@@ -217,8 +202,10 @@ impl App {
                         receiver = match self.current_clients.1 {
                             Some(id) => id,
                             None => {
-                                self.errors
-                                    .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                                self.errors.push((
+                                    std::time::Instant::now(),
+                                    AlysonError::Internal("receiver not found".to_string()),)
+                                );
                                 self.input_mode = InputMode::Selecting;
                                 return Ok(());
                             }
@@ -228,8 +215,10 @@ impl App {
                         receiver = match self.current_room {
                             Some(room) => room,
                             None => {
-                                self.errors
-                                    .push((std::time::Instant::now(), WireError::ReceiverNotFound));
+                                self.errors.push((
+                                    std::time::Instant::now(),
+                                    AlysonError::Internal("receiver not found".to_string()),)
+                                );
                                 self.input_mode = InputMode::Selecting;
                                 return Ok(());
                             }

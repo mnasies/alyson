@@ -1,6 +1,7 @@
-use crate::WireError;
+use crate::db;
 use crate::network::{ServerState, framing};
 use crate::types::{Client, ClientInfo, ClientRequest, Room, ServerEvent};
+use crate::{AlysonError, WireError};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -20,7 +21,7 @@ pub async fn accept_loop(listener: TcpListener, server_state: Arc<ServerState>) 
 }
 
 // main server loop
-pub async fn run_server(addr: String) -> Result<String, WireError> {
+pub async fn run_server(addr: String) -> Result<String, AlysonError> {
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -40,8 +41,25 @@ pub async fn run_server(addr: String) -> Result<String, WireError> {
         }
     };
     println!("Server started on {}", server_addr.clone());
+    // initiate the server db
+    let pool = db::init_server_db("sqlite://alyson.db").await?;
+
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new().await);
+    let server_state = Arc::new(ServerState::new(pool.clone()).await);
+
+    // Fetch existing clients from db
+    let users = db::fetch_users(&pool).await?;
+
+    for (id, username) in users {
+        server_state.register_tmp_client(id, username).await;
+    }
+
+    // fetch existing rooms from db
+    let rooms = db::fetch_rooms(&pool).await?;
+
+    for (_, room) in rooms {
+        server_state.register_room(room).await;
+    }
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
@@ -54,12 +72,11 @@ pub async fn run_server(addr: String) -> Result<String, WireError> {
 pub async fn handle_incoming_connection(
     stream: TcpStream,
     server_state: Arc<ServerState>,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     use tokio::io::AsyncBufReadExt;
 
     let clients = server_state.clients.clone();
     let rooms = server_state.rooms.clone();
-    let next_id = server_state.next_id.clone();
 
     // Read first line as username (handshake)
     let (reader, mut writer) = stream.into_split();
@@ -70,14 +87,16 @@ pub async fn handle_incoming_connection(
             username = username.trim().to_string();
         }
         Err(_) => {
-            return Err(WireError::InvalidName);
+            return Err(AlysonError::Wire(WireError::InvalidName));
         }
     }
     if username.is_empty() {
-        return Err(WireError::InvalidName);
+        return Err(AlysonError::Wire(WireError::InvalidName));
     }
 
-    let client_id = next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // register the user on the db
+    let client_id = db::insert_user(&username, &server_state.db).await?;
+
     let peer_addr = writer.peer_addr()?;
     let ip = peer_addr.ip().to_string();
     let port = peer_addr.port();
@@ -129,6 +148,32 @@ pub async fn handle_incoming_connection(
         let _ = writer.send(ServerEvent::Roster(roster)).await;
     }
 
+    // Notify to the new client the list of all existing rooms
+    // Also with that notify the chat history of the rooms
+
+    for (_, room) in rooms.lock().await.iter() {
+        if let Some(writer) = &client.writer {
+            let _ = writer.send(ServerEvent::RoomCreated(room.clone())).await;
+        }
+
+        let messages = db::fetch_history_for_room(room.id, &server_state.db).await?;
+        for (_, msg) in messages {
+            if let Some(writer) = &client.writer {
+                let _ = writer.send(ServerEvent::ChatMessage(msg)).await;
+            }
+        }
+    }
+
+    // fetch the db for the message history of the client
+    let messages = db::fetch_history_for_user(client_id, &server_state.db).await?;
+    for (_, msg) in messages {
+        if msg.to == client_id || msg.from == client_id {
+            if let Some(writer) = &client.writer {
+                let _ = writer.send(ServerEvent::ChatMessage(msg)).await;
+            }
+        }
+    }
+
     // push the new client to the clients list
     clients.lock().await.insert(client_id, client.clone());
 
@@ -137,17 +182,22 @@ pub async fn handle_incoming_connection(
     let curr_client_r = client.clone();
     let rooms_reader = Arc::clone(&rooms);
     let server_state_clone = Arc::clone(&server_state);
-    // let event_tx_reader = event_tx.clone();
+
     tokio::spawn(async move {
         let clients_reader_clone = clients_reader.clone();
         let rooms_reader_clone = rooms_reader.clone();
-        let handle_entry = async move |msg: ClientRequest| {
+        let ss_clone = Arc::clone(&server_state_clone);
+        let handle_entry = async move |msg: ClientRequest| -> Result<(), AlysonError> {
             match msg {
                 ClientRequest::ChatMessage(entry) => {
-                    // find the client and send the data to server-side writer task
                     let clients_lock = clients_reader_clone.lock().await;
                     let rooms_lock = rooms_reader_clone.lock().await;
-                    if entry.cli_or_room {
+
+                    // insert the message to db
+                    db::insert_messages(&entry, &ss_clone.db).await?;
+
+                    // check if the message is to a client or a room
+                    if entry.is_to_client {
                         if let Some(client) = clients_lock.get(&entry.to) {
                             if let Some(writer) = &client.writer {
                                 let _ = writer.send(ServerEvent::ChatMessage(entry.clone())).await;
@@ -176,11 +226,19 @@ pub async fn handle_incoming_connection(
                     client_id,
                     username,
                 } => {
-                    // Add a new room to the server state rooms list
-                    let id = server_state_clone.next_room_id();
-                    let new_room = Room::new(id, username, client_id);
+                    // save the info to db
+                    let id = db::insert_room(
+                        username.as_str(),
+                        client_id as i64,
+                        &server_state_clone.db,
+                    )
+                    .await?;
+
+                    // save the info to in-memory server-state storage
+                    let new_room = Room::new(id, username.clone(), client_id);
                     rooms_reader.lock().await.insert(id, new_room.clone());
-                    // Notify all clients of the new room
+
+                    // Notify all clients of the newly created room
                     for (_, client) in clients_reader_clone.lock().await.iter() {
                         let Some(writer) = &client.writer else {
                             continue;
@@ -191,12 +249,10 @@ pub async fn handle_incoming_connection(
                     }
                 }
                 ClientRequest::JoinRoom { client_id, room_id } => {
-                    // add the client to the room
                     let rooms_reader_clone = rooms_reader.clone();
                     if let Some(room) = rooms_reader_clone.lock().await.get_mut(&room_id) {
                         room.add_member(client_id);
 
-                        // Notify the client of the room join
                         let client = { clients_reader_clone.lock().await.get(&client_id).cloned() };
                         if let Some(client) = client {
                             if let Some(writer) = client.writer {
@@ -209,20 +265,25 @@ pub async fn handle_incoming_connection(
                             }
                         }
                     }
+                    // save the info to db
+                    db::insert_member_to_room(client_id as i64, room_id as i64, &ss_clone.db)
+                        .await?;
                 }
             }
+            Ok(())
         };
         let curr_client_er = curr_client_r.clone();
-        let handle_error = async move |err: WireError| {
+        let handle_error = async move |err: AlysonError| {
             let curr_client = curr_client_er.clone();
-            match err {
-                e => {
-                    let Some(writer) = curr_client.writer else {
-                        return;
-                    };
-                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
-                }
-            }
+            let Some(writer) = curr_client.writer else {
+                return;
+            };
+            let wire_err = match err {
+                AlysonError::Wire(w) => w,
+                AlysonError::Database(dberr) => WireError::DatabaseFailure(dberr),
+                _ => WireError::InternalServerError,
+            };
+            let _ = writer.send(ServerEvent::Error(wire_err)).await;
         };
         framing::read_framed_loop(reader, handle_entry, handle_error).await;
 
@@ -240,19 +301,18 @@ pub async fn handle_incoming_connection(
     });
 
     // Server-side writer task of a Client
-
     let curr_client_w = client.clone();
     tokio::spawn(async move {
-        let handle_error = async move |err: WireError| {
+        let handle_error = async move |err: AlysonError| {
             let curr_client = curr_client_w.clone();
-            match err {
-                e => {
-                    let Some(writer) = curr_client.writer else {
-                        return;
-                    };
-                    let _ = writer.send(ServerEvent::Error(e.to_string())).await;
-                }
-            }
+            let Some(writer) = curr_client.writer else {
+                return;
+            };
+            let wire_err = match err {
+                AlysonError::Wire(w) => w,
+                _ => WireError::InternalServerError,
+            };
+            let _ = writer.send(ServerEvent::Error(wire_err)).await;
         };
         framing::write_framed_loop(writer, write_rx, handle_error).await;
     });

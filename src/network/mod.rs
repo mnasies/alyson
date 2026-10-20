@@ -1,15 +1,17 @@
 pub mod client_side;
+use crate::db::init_server_db;
 use crate::types::{Client, ClientInfo, ClientRequest, InboxEntry, Room};
 use client_side::run_client;
+use sqlx::SqlitePool;
 
 pub mod framing;
 pub mod server_side;
 
-use crate::WireError;
+use crate::AlysonError;
+use crate::db;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -30,7 +32,7 @@ pub enum NetworkEvent {
     RoomJoined { client_id: u64, room_id: u64 },
     MessageReceived(InboxEntry),
     MyClient { id: u64 },
-    ErrorOccurred(WireError),
+    ErrorOccurred(AlysonError),
 }
 
 #[derive(Clone)]
@@ -43,68 +45,69 @@ impl NetworkHandle {
         NetworkHandle { cmd_tx }
     }
 
-    pub fn spawn_client(&self, name: String) -> Result<(), WireError> {
+    pub fn spawn_client(&self, name: String) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::SpawnClient { username: name })
-            .map_err(|_| WireError::PortNotAvailable)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn send_message(&self, data: InboxEntry) -> Result<(), WireError> {
+    pub fn send_message(&self, data: InboxEntry) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::SendMessage { data })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn create_room(&self, client_id: u64, name: String) -> Result<(), WireError> {
+    pub fn create_room(&self, client_id: u64, name: String) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::CreateRoom {
                 client_id,
                 username: name,
             })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 
-    pub fn join_room(&self, client_id: u64, room_id: u64) -> Result<(), WireError> {
+    pub fn join_room(&self, client_id: u64, room_id: u64) -> Result<(), AlysonError> {
         self.cmd_tx
             .try_send(NetworkCommand::JoinRoom { client_id, room_id })
-            .map_err(|_| WireError::ChannelFailure)
+            .map_err(|e| AlysonError::ChannelFailure(e.to_string()))
     }
 }
 
 pub struct ServerState {
+    pub db: SqlitePool,
     pub clients: Arc<Mutex<HashMap<u64, Client>>>,
+    pub tmp_clients: Arc<Mutex<HashMap<u64, String>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
-    pub next_id: Arc<atomic::AtomicU64>,
-    pub next_room_id: Arc<atomic::AtomicU64>,
 }
 
 impl ServerState {
-    pub async fn new() -> Self {
+    pub async fn new(db: SqlitePool) -> Self {
         ServerState {
+            db,
             clients: Arc::new(Mutex::new(HashMap::new())),
+            tmp_clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(atomic::AtomicU64::new(0)),
-            next_room_id: Arc::new(atomic::AtomicU64::new(0)),
         }
     }
-    pub async fn register(&mut self, client: Client) {
+
+    pub async fn register_tmp_client(&self, id: u64, username: String) {
+        self.tmp_clients.lock().await.insert(id, username);
+    }
+
+    pub async fn register(&self, client: Client) {
         self.clients.lock().await.insert(client.id, client);
     }
 
-    pub async fn remove(&mut self, id: u64) {
+    pub async fn register_room(&self, room: Room) {
+        self.rooms.lock().await.insert(room.id, room);
+    }
+
+    pub async fn remove(&self, id: u64) {
         self.clients.lock().await.remove(&id);
     }
 
     pub async fn get(&self, id: u64) -> Option<Client> {
         self.clients.lock().await.get(&id).cloned()
-    }
-
-    pub fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, atomic::Ordering::SeqCst)
-    }
-
-    pub fn next_room_id(&self) -> u64 {
-        self.next_room_id.fetch_add(1, atomic::Ordering::SeqCst)
     }
 }
 
@@ -141,7 +144,7 @@ impl ClientState {
 pub async fn run_network_engine(
     cmd_rx: Receiver<NetworkCommand>,
     event_tx: Sender<NetworkEvent>,
-) -> Result<(), WireError> {
+) -> Result<(), AlysonError> {
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(l) => l,
         Err(e) => {
@@ -160,8 +163,25 @@ pub async fn run_network_engine(
             );
         }
     };
+    // initiate the server db
+    let pool = init_server_db("sqlite://alyson.db").await?;
+
     // Map of active client connections on the server side
-    let server_state = Arc::new(ServerState::new().await);
+    let server_state = Arc::new(ServerState::new(pool.clone()).await);
+
+    // Fetch existing clients from db
+    let users = db::fetch_users(&pool).await?;
+
+    for (id, username) in users {
+        server_state.register_tmp_client(id, username).await;
+    }
+
+    // fetch existing rooms from db
+    let rooms = db::fetch_rooms(&pool).await?;
+
+    for (_, room) in rooms {
+        server_state.register_room(room).await;
+    }
 
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);

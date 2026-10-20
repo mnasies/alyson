@@ -1,4 +1,4 @@
-use alyson::WireError;
+use alyson::AlysonError;
 use alyson::network::client_side::run_client;
 use alyson::network::{NetworkHandle, run_network_engine};
 
@@ -22,7 +22,7 @@ fn reset_terminal() {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), WireError> {
+async fn main() -> Result<(), AlysonError> {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     // --- channels setup ---

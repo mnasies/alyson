@@ -1,3 +1,4 @@
+use crate::WireError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::SystemTime;
@@ -39,26 +40,26 @@ pub enum ServerEvent {
     ChatMessage(InboxEntry),
     RoomCreated(Room),
     RoomJoined { client_id: u64, room: Room },
-    Error(String),
+    Error(WireError),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct InboxEntry {
     pub time: SystemTime,
     pub msg: String,
-    pub from: u64,         // Client ID
-    pub to: u64,           // Client ID or Room ID
-    pub cli_or_room: bool, // true = message is from Client (to: ClientID), false = vice-versa
+    pub from: u64,          // Client ID
+    pub to: u64,            // Client ID or Room ID
+    pub is_to_client: bool, // true = message is to Client (to: ClientID), false = vice-versa
 }
 
 impl InboxEntry {
-    pub fn new(time: SystemTime, msg: String, from: u64, to: u64, cli_or_room: bool) -> Self {
+    pub fn new(time: SystemTime, msg: String, from: u64, to: u64, is_to_client: bool) -> Self {
         InboxEntry {
             time,
             msg,
             from,
             to,
-            cli_or_room,
+            is_to_client,
         }
     }
 }
