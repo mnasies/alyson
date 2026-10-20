@@ -54,6 +54,13 @@ pub async fn run_server(addr: String) -> Result<String, AlysonError> {
         server_state.register_tmp_client(id, username).await;
     }
 
+    // fetch existing rooms from db
+    let rooms = db::fetch_rooms(&pool).await?;
+
+    for (_, room) in rooms {
+        server_state.register_room(room).await;
+    }
+
     // Spawn the server accept loop
     let server_state_clone = Arc::clone(&server_state);
     // Server-side task that accepts incoming connections
@@ -149,8 +156,6 @@ pub async fn handle_incoming_connection(
         }
     }
 
-    
-
     // fetch the db for the message history of the client
     let messages = db::fetch_history_for_user(client_id, &server_state.db).await?;
     for (_, msg) in messages {
@@ -213,9 +218,17 @@ pub async fn handle_incoming_connection(
                     client_id,
                     username,
                 } => {
-                    let id = server_state_clone.next_room_id();
-                    let new_room = Room::new(id, username, client_id);
+                    // save the info to db
+                    let id = db::insert_room(
+                        username.as_str(),
+                        client_id as i64,
+                        &server_state_clone.db,
+                    )
+                    .await?;
+                    let new_room = Room::new(id, username.clone(), client_id);
                     rooms_reader.lock().await.insert(id, new_room.clone());
+
+                    // Notify all clients of the newly created to room
                     for (_, client) in clients_reader_clone.lock().await.iter() {
                         let Some(writer) = &client.writer else {
                             continue;
@@ -254,6 +267,7 @@ pub async fn handle_incoming_connection(
             };
             let wire_err = match err {
                 AlysonError::Wire(w) => w,
+                AlysonError::Database(dberr) => WireError::DatabaseFailure(dberr),
                 _ => WireError::InternalServerError,
             };
             let _ = writer.send(ServerEvent::Error(wire_err)).await;

@@ -11,7 +11,6 @@ use crate::AlysonError;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -78,7 +77,6 @@ pub struct ServerState {
     pub clients: Arc<Mutex<HashMap<u64, Client>>>,
     pub tmp_clients: Arc<Mutex<HashMap<u64, String>>>,
     pub rooms: Arc<Mutex<HashMap<u64, Room>>>,
-    pub next_room_id: Arc<atomic::AtomicU64>,
 }
 
 impl ServerState {
@@ -88,7 +86,6 @@ impl ServerState {
             clients: Arc::new(Mutex::new(HashMap::new())),
             tmp_clients: Arc::new(Mutex::new(HashMap::new())),
             rooms: Arc::new(Mutex::new(HashMap::new())),
-            next_room_id: Arc::new(atomic::AtomicU64::new(0)),
         }
     }
 
@@ -96,20 +93,20 @@ impl ServerState {
         self.tmp_clients.lock().await.insert(id, username);
     }
 
-    pub async fn register(&mut self, client: Client) {
+    pub async fn register(&self, client: Client) {
         self.clients.lock().await.insert(client.id, client);
     }
 
-    pub async fn remove(&mut self, id: u64) {
+    pub async fn register_room(&self, room: Room) {
+        self.rooms.lock().await.insert(room.id, room);
+    }
+
+    pub async fn remove(&self, id: u64) {
         self.clients.lock().await.remove(&id);
     }
 
     pub async fn get(&self, id: u64) -> Option<Client> {
         self.clients.lock().await.get(&id).cloned()
-    }
-
-    pub fn next_room_id(&self) -> u64 {
-        self.next_room_id.fetch_add(1, atomic::Ordering::SeqCst)
     }
 }
 

@@ -42,6 +42,9 @@ pub enum WireError {
 
     #[error("internal server error")]
     InternalServerError,
+
+    #[error(" server failure: {0}")]
+    DatabaseFailure(String),
 }
 
 /// Node-internal operational and runtime errors (never transmitted raw across the wire).

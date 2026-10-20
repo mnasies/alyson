@@ -75,7 +75,7 @@ pub async fn init_server_db(database_url: &str) -> Result<SqlitePool, AlysonErro
     Ok(pool)
 }
 
-pub async fn insert_room(name: &str, pool: &SqlitePool) -> Result<u64, AlysonError> {
+pub async fn insert_room(name: &str, owner_id: i64, pool: &SqlitePool) -> Result<u64, AlysonError> {
     // check if user already exists
     let existing = sqlx::query("SELECT id FROM rooms WHERE name = ?1")
         .bind(name)
@@ -90,8 +90,9 @@ pub async fn insert_room(name: &str, pool: &SqlitePool) -> Result<u64, AlysonErr
         return Ok(id as u64);
     }
 
-    let result = sqlx::query("INSERT INTO rooms (name) VALUES (?1)")
+    let result = sqlx::query("INSERT INTO rooms (name, owner_id) VALUES (?1, ?2)")
         .bind(name)
+        .bind(owner_id)
         .execute(pool)
         .await
         .map_err(|e| AlysonError::Database(e.to_string()))?;
