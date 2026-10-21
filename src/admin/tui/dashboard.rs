@@ -1,14 +1,13 @@
-use crate::admin::metrics::RollingHistory;
 use crate::admin::server_manager::ServerStatus;
 use crate::admin::tui::app::{AdminApp, InputMode};
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Sparkline};
 use ratatui::Frame;
 
 /// Renders the complete Alyson Admin TUI dashboard onto the frame.
-pub fn render_dashboard(f: &mut Frame, app: &mut AdminApp) {
+pub fn render_dashboard(f: &mut Frame, app: &AdminApp) {
     let size = f.area();
 
     // 1. Vertical split: Header (3), Main Body (Min 10), Bottom Bar / Prompt (3)
@@ -79,7 +78,7 @@ fn render_header(f: &mut Frame, app: &AdminApp, area: Rect) {
 }
 
 /// Renders the primary central area: Server List + Metrics Summary (Left) and Sparklines (Right).
-fn render_main(f: &mut Frame, app: &mut AdminApp, area: Rect) {
+fn render_main(f: &mut Frame, app: &AdminApp, area: Rect) {
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(38), Constraint::Min(30)])
@@ -99,8 +98,8 @@ fn render_main(f: &mut Frame, app: &mut AdminApp, area: Rect) {
 }
 
 /// Renders the list of managed child server processes.
-fn render_server_list(f: &mut Frame, app: &mut AdminApp, area: Rect) {
-    let servers = app.server_manager.list();
+fn render_server_list(f: &mut Frame, app: &AdminApp, area: Rect) {
+    let servers = app.server_manager.servers();
 
     let items: Vec<ListItem> = if servers.is_empty() {
         vec![ListItem::new(Line::from(vec![Span::styled(
@@ -156,7 +155,7 @@ fn render_server_list(f: &mut Frame, app: &mut AdminApp, area: Rect) {
 }
 
 /// Renders live point-in-time metrics of the currently selected server.
-fn render_metrics_panel(f: &mut Frame, app: &mut AdminApp, area: Rect) {
+fn render_metrics_panel(f: &mut Frame, app: &AdminApp, area: Rect) {
     let selected_server = app.selected_server();
 
     let text = if let Some(server) = selected_server {
@@ -235,7 +234,7 @@ fn render_metrics_panel(f: &mut Frame, app: &mut AdminApp, area: Rect) {
 }
 
 /// Renders the 3 sparkline graphs tracking connection and latency history over time.
-fn render_graphs(f: &mut Frame, app: &mut AdminApp, area: Rect) {
+fn render_graphs(f: &mut Frame, app: &AdminApp, area: Rect) {
     let graph_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

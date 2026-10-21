@@ -1,5 +1,5 @@
 use crate::admin::headless_client::{CancellationToken, headless_connect};
-use crate::admin::metrics::{MetricsSnapshot, RollingHistory, ServerMetrics};
+use crate::admin::metrics::RollingHistory;
 use crate::admin::server_manager::{ManagedServer, ServerManager, ServerStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,8 +67,8 @@ impl AdminApp {
     }
 
     /// Retrieve the currently selected server, if any exist.
-    pub fn selected_server(&mut self) -> Option<&ManagedServer> {
-        let servers = self.server_manager.list();
+    pub fn selected_server(&self) -> Option<&ManagedServer> {
+        let servers = self.server_manager.servers();
         if servers.is_empty() {
             None
         } else {
@@ -79,7 +79,7 @@ impl AdminApp {
 
     /// Move server selection cursor up.
     pub fn select_prev(&mut self) {
-        let count = self.server_manager.list().len();
+        let count = self.server_manager.servers().len();
         if count > 0 {
             if self.selected_index == 0 {
                 self.selected_index = count - 1;
@@ -91,7 +91,7 @@ impl AdminApp {
 
     /// Move server selection cursor down.
     pub fn select_next(&mut self) {
-        let count = self.server_manager.list().len();
+        let count = self.server_manager.servers().len();
         if count > 0 {
             self.selected_index = (self.selected_index + 1) % count;
         }
@@ -112,7 +112,7 @@ impl AdminApp {
                 let pid = server.pid;
                 self.history.insert(id, RollingHistory::new(120));
                 self.client_tokens.insert(id, Vec::new());
-                self.selected_index = self.server_manager.list().len().saturating_sub(1);
+                self.selected_index = self.server_manager.servers().len().saturating_sub(1);
                 self.set_toast(
                     format!("Server srv-{} started on {} (PID {})", id, bound, pid),
                     false,
@@ -143,15 +143,14 @@ impl AdminApp {
 
     /// Batch launch N headless clients to the selected server at the specified ramp rate.
     pub fn batch_launch_selected(&mut self, count: usize, ramp_rate: usize) {
-        let (server_id, server_addr, metrics) = match self.selected_server() {
-            Some(s) if s.status == ServerStatus::Running => {
-                (s.id, s.addr.clone(), Arc::clone(&s.metrics))
-            }
-            Some(s) => {
-                self.set_toast(
-                    format!("srv-{} is not running ({:?})", s.id, s.status),
-                    true,
-                );
+        let selected = self
+            .selected_server()
+            .map(|s| (s.id, s.addr.clone(), s.status.clone(), Arc::clone(&s.metrics)));
+
+        let (server_id, server_addr, metrics) = match selected {
+            Some((id, addr, ServerStatus::Running, m)) => (id, addr, m),
+            Some((id, _, status, _)) => {
+                self.set_toast(format!("srv-{} is not running ({:?})", id, status), true);
                 return;
             }
             None => {

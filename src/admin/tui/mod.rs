@@ -64,7 +64,9 @@ async fn run_loop<B: ratatui::backend::Backend>(
         app.tick_snapshots();
 
         // Step B: Draw UI frame
-        terminal.draw(|f| render_dashboard(f, app))?;
+        terminal
+            .draw(|f| render_dashboard(f, app))
+            .map_err(|e| AlysonError::Internal(e.to_string()))?;
 
         if app.should_quit {
             break;
