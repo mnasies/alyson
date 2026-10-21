@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod db;
 pub mod network;
 pub mod types;
