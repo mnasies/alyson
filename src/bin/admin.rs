@@ -34,10 +34,27 @@ async fn main() -> Result<(), AlysonError> {
             );
             println!("Press Ctrl+C to stop the server...");
 
+            let server_metrics = Arc::clone(&server.metrics);
+            let status_task = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    let snap = server_metrics.snapshot();
+                    println!(
+                        "   [Server Stats] CPU: {:>4.1}% | Memory: {:>5.1}MB | Active Conns: {}",
+                        snap.cpu_percent,
+                        snap.memory_mb(),
+                        snap.active_connections
+                    );
+                }
+            });
+
             tokio::signal::ctrl_c().await.map_err(|e| {
                 AlysonError::Internal(format!("Failed to listen for Ctrl+C: {}", e))
             })?;
 
+            status_task.abort();
             println!("\n🛑 Received Ctrl+C. Shutting down server PID {}...", server.pid);
             server.stop()?;
             println!("Server stopped cleanly.");

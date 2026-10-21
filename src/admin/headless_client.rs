@@ -79,6 +79,8 @@ pub async fn headless_connect(
     metrics: Arc<ServerMetrics>,
     cancel: CancellationToken,
 ) -> Result<u64, AlysonError> {
+    let start_time = std::time::Instant::now();
+
     // 1. Establish TCP connection
     let mut stream = match TcpStream::connect(&server_addr).await {
         Ok(s) => s,
@@ -117,6 +119,10 @@ pub async fn headless_connect(
             metrics.record_connect_failure();
             AlysonError::Internal(format!("Failed to parse server client_id: {}", e))
         })?;
+
+    // Record elapsed connection + handshake latency into histogram
+    let elapsed = start_time.elapsed();
+    metrics.record_connect_latency(elapsed);
 
     // 3. Mark successful connection in metrics
     metrics.record_connect();
