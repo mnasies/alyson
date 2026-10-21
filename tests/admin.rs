@@ -103,3 +103,81 @@ async fn test_connect_storm_batch() {
 
     server.stop().expect("Failed to stop server");
 }
+
+#[tokio::test]
+async fn test_histogram_latency_percentiles() {
+    let metrics = ServerMetrics::new();
+
+    // Record synthetic latencies: 100 values from 1ms to 100ms
+    for ms in 1..=100 {
+        metrics.record_connect_latency(Duration::from_millis(ms));
+    }
+
+    let snap = metrics.snapshot();
+    // p50 should be around 50ms (50,000 micros)
+    let p50_ms = snap.connect_latency_p50_us as f64 / 1000.0;
+    assert!(
+        (48.0..=52.0).contains(&p50_ms),
+        "Expected p50 around 50ms, got: {:.2}ms",
+        p50_ms
+    );
+
+    // p99 should be around 99ms (99,000 micros)
+    let p99_ms = snap.connect_latency_p99_us as f64 / 1000.0;
+    assert!(
+        (97.0..=100.0).contains(&p99_ms),
+        "Expected p99 around 99ms, got: {:.2}ms",
+        p99_ms
+    );
+}
+
+#[tokio::test]
+async fn test_rolling_history_buffer() {
+    use alyson::admin::RollingHistory;
+
+    let mut history = RollingHistory::new(3);
+    assert_eq!(history.entries.len(), 0);
+
+    let metrics = ServerMetrics::new();
+
+    // Push 4 snapshots to verify max_entries eviction
+    for _ in 0..4 {
+        metrics.record_connect();
+        history.push(metrics.snapshot());
+    }
+
+    assert_eq!(history.entries.len(), 3, "History must cap at max_entries (3)");
+    let latest = history.latest().expect("Must have latest entry");
+    assert_eq!(latest.total_connects, 4);
+}
+
+#[tokio::test]
+async fn test_sysinfo_sampler_process_stats() {
+    // Start a real child server process
+    let mut server = start_server(100, "127.0.0.1:0").expect("Failed to start server");
+
+    // Wait up to 3 seconds for the sysinfo sampler task to refresh memory
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut observed_memory = false;
+
+    while std::time::Instant::now() < deadline {
+        let snap = server.metrics.snapshot();
+        if snap.memory_bytes > 0 {
+            observed_memory = true;
+            assert!(
+                snap.memory_mb() > 0.1,
+                "Server RSS memory must be positive, got: {} MB",
+                snap.memory_mb()
+            );
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    assert!(
+        observed_memory,
+        "sysinfo sampler should have recorded process memory > 0 bytes within 3s"
+    );
+
+    server.stop().expect("Failed to stop server");
+}
