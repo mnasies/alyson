@@ -181,3 +181,75 @@ async fn test_sysinfo_sampler_process_stats() {
 
     server.stop().expect("Failed to stop server");
 }
+
+#[tokio::test]
+async fn test_admin_app_lifecycle_and_selection() {
+    use alyson::admin::AdminApp;
+
+    let mut app = AdminApp::new();
+    assert!(app.selected_server().is_none());
+
+    // Start server 0
+    app.start_server("127.0.0.1:0");
+    assert_eq!(app.server_manager.servers().len(), 1);
+    assert_eq!(app.selected_index, 0);
+
+    let s0_id = app.selected_server().map(|s| s.id).unwrap();
+    assert_eq!(s0_id, 0);
+
+    // Start server 1
+    app.start_server("127.0.0.1:0");
+    assert_eq!(app.server_manager.servers().len(), 2);
+    assert_eq!(app.selected_index, 1);
+
+    // Test selection navigation
+    app.select_prev();
+    assert_eq!(app.selected_index, 0);
+    app.select_next();
+    assert_eq!(app.selected_index, 1);
+
+    // Stop selected server
+    app.stop_selected_server();
+    let s1_status = app.selected_server().map(|s| s.status.clone()).unwrap();
+    assert_eq!(s1_status, ServerStatus::Stopped);
+
+    app.server_manager.stop_all();
+}
+
+#[tokio::test]
+async fn test_admin_app_batch_and_snapshots() {
+    use alyson::admin::AdminApp;
+
+    let mut app = AdminApp::new();
+    app.start_server("127.0.0.1:0");
+
+    let server_id = app.selected_server().map(|s| s.id).unwrap();
+
+    // Launch 3 headless clients to this server
+    app.batch_launch_selected(3, 50);
+
+    // Wait 300ms for connections to establish
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Simulate 250ms snapshot tick
+    app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
+    app.tick_snapshots();
+
+    let history = app.history.get(&server_id).expect("History must exist for server");
+    assert!(!history.entries.is_empty(), "Snapshot must be recorded in history");
+    let latest = history.latest().unwrap();
+    assert_eq!(latest.total_connects, 3);
+    assert_eq!(latest.active_connections, 3);
+
+    // Disconnect clients
+    app.disconnect_clients(server_id);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
+    app.tick_snapshots();
+
+    let latest_after = app.history.get(&server_id).unwrap().latest().unwrap();
+    assert_eq!(latest_after.active_connections, 0);
+
+    app.server_manager.stop_all();
+}
