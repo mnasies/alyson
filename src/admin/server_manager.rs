@@ -327,6 +327,11 @@ impl ServerManager {
         }
     }
 
+    /// Return an immutable slice of all managed servers.
+    pub fn servers(&self) -> &[ManagedServer] {
+        &self.servers
+    }
+
     /// Refresh status of all managed servers and return a reference to the list.
     pub fn list(&mut self) -> &[ManagedServer] {
         for server in &mut self.servers {

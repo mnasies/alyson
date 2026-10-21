@@ -3,25 +3,26 @@ use alyson::admin::headless_client::CancellationToken;
 use alyson::admin::load_test::run_connect_storm;
 use alyson::admin::metrics::ServerMetrics;
 use alyson::admin::server_manager::start_server;
+use alyson::admin::tui::run_admin_tui;
 use std::env;
 use std::sync::Arc;
 
-/// Entry point for the `alyson-admin` CLI binary.
+/// Entry point for the `alyson-admin` binary.
 ///
-/// In Phase 1, this provides command-line control to:
-/// - Start and manage child server processes.
-/// - Connect headless clients.
-/// - Run connect-storm load tests with customizable ramp rates.
+/// - Running with no arguments or `admin tui` launches the interactive Ratatui TUI dashboard.
+/// - Subcommands `start`, `storm`, and `status` are available for headless/CLI automation.
 #[tokio::main]
 async fn main() -> Result<(), AlysonError> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        print_usage();
-        return Ok(());
+        return run_admin_tui().await;
     }
 
     match args[1].as_str() {
+        "tui" => {
+            run_admin_tui().await?;
+        }
         "start" => {
             // Usage: admin start [addr]
             let addr = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:9000");
