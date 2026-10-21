@@ -48,10 +48,17 @@ pub async fn run_connect_storm(
             tokio::select! {
                 _ = ticker.tick() => {
                     let elapsed = start_time.elapsed().as_secs_f64();
-                    let (active, total, failed) = reporter_metrics.connection_summary();
+                    let snap = reporter_metrics.snapshot();
                     println!(
-                        "[{:>5.1}s] active: {:<5} total_connected: {:<5} failed: {:<5}",
-                        elapsed, active, total, failed
+                        "[{:>5.1}s] active: {:<5} total: {:<5} fail: {:<3} | latency p50: {:<7} p99: {:<7} | CPU: {:>4.1}% | RSS: {:>5.1}MB",
+                        elapsed,
+                        snap.active_connections,
+                        snap.total_connects,
+                        snap.connect_failures,
+                        snap.connect_latency_p50_str(),
+                        snap.connect_latency_p99_str(),
+                        snap.cpu_percent,
+                        snap.memory_mb()
                     );
                 }
                 _ = reporter_cancel.cancelled() => {
@@ -86,9 +93,15 @@ pub async fn run_connect_storm(
     cancel.cancelled().await;
 
     let _ = reporter_handle.await;
-    let (active, total, failed) = metrics.connection_summary();
+    let snap = metrics.snapshot();
     println!(
-        "\n📊 Storm finished. Summary: active: {}, total: {}, failed: {}",
-        active, total, failed
+        "\n📊 Storm finished. Summary:\n   • Active connections: {}\n   • Total connected:    {}\n   • Connect failures:   {}\n   • Connect Latency:    p50: {} | p99: {}\n   • Process Resources:  CPU: {:.1}% | RSS: {:.1}MB",
+        snap.active_connections,
+        snap.total_connects,
+        snap.connect_failures,
+        snap.connect_latency_p50_str(),
+        snap.connect_latency_p99_str(),
+        snap.cpu_percent,
+        snap.memory_mb()
     );
 }

@@ -1,10 +1,13 @@
 use crate::AlysonError;
+use crate::admin::metrics::ServerMetrics;
 use std::env;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 /// The execution status of a child server process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub struct ManagedServer {
     pub addr: String,
     /// Current health / lifecycle status.
     pub status: ServerStatus,
+    /// Per-server atomic counters, latency histograms, and system resource metrics.
+    pub metrics: Arc<ServerMetrics>,
 }
 
 impl ManagedServer {
@@ -235,12 +240,42 @@ pub fn start_server(id: usize, addr: &str) -> Result<ManagedServer, AlysonError>
         }
     };
 
+    let metrics = Arc::new(ServerMetrics::new());
+    spawn_process_sampler(pid, Arc::clone(&metrics));
+
     Ok(ManagedServer {
         id,
         child,
         pid,
         addr: bound_addr,
         status: ServerStatus::Running,
+        metrics,
+    })
+}
+
+/// Spawns a background task that periodically samples CPU% and Memory (RSS) of a child process.
+///
+/// Refreshes process stats using `sysinfo` every 1 second and writes them into `ServerMetrics`.
+/// Automatically terminates when the child process exits and disappears from the OS process table.
+pub fn spawn_process_sampler(pid: u32, metrics: Arc<ServerMetrics>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let sys_pid = Pid::from_u32(pid);
+        let mut sys = System::new();
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+        loop {
+            interval.tick().await;
+
+            sys.refresh_processes(ProcessesToUpdate::Some(&[sys_pid]), true);
+            if let Some(process) = sys.process(sys_pid) {
+                let cpu = process.cpu_usage() as f64;
+                let memory_bytes = process.memory();
+                metrics.update_process_stats(cpu, memory_bytes);
+            } else {
+                // Process is no longer alive in OS table
+                break;
+            }
+        }
     })
 }
 
