@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "crossterm",
+ "libc",
  "ratatui",
  "serde",
  "sqlx",
