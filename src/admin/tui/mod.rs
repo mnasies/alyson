@@ -87,41 +87,74 @@ async fn run_loop<B: ratatui::backend::Backend>(
 
 fn handle_key_event(app: &mut AdminApp, code: KeyCode) {
     match app.input_mode {
-        InputMode::Normal => match code {
-            KeyCode::Char('s') => {
-                app.input_mode = InputMode::PromptStartServer;
-                app.input_buffer.clear();
+        InputMode::Normal => {
+            // If help overlay is open, dismiss it on any of ?, h, Esc, or Enter
+            if app.show_help_modal {
+                match code {
+                    KeyCode::Char('?') | KeyCode::Char('h') | KeyCode::Esc | KeyCode::Enter => {
+                        app.show_help_modal = false;
+                        return;
+                    }
+                    _ => {}
+                }
             }
-            KeyCode::Char('x') => {
-                app.stop_selected_server();
-            }
-            KeyCode::Char('b') => {
-                if app.selected_server().is_some() {
-                    app.input_mode = InputMode::PromptBatchLaunch;
+
+            match code {
+                KeyCode::Char('?') | KeyCode::Char('h') => {
+                    app.show_help_modal = true;
+                }
+                KeyCode::Char('a') => {
+                    app.view_aggregate = !app.view_aggregate;
+                    let msg = if app.view_aggregate {
+                        "Switched to Multi-Server Aggregate View."
+                    } else {
+                        "Switched to Single Server View."
+                    };
+                    app.set_toast(msg.to_string(), false);
+                }
+                KeyCode::Char('s') => {
+                    app.input_mode = InputMode::PromptStartServer;
                     app.input_buffer.clear();
-                } else {
-                    app.set_toast("Select a server first (press 's' to start one).".to_string(), true);
                 }
-            }
-            KeyCode::Char('d') => {
-                let id_opt = app.selected_server().map(|s| s.id);
-                if let Some(id) = id_opt {
-                    app.disconnect_clients(id);
-                } else {
-                    app.set_toast("No server selected.".to_string(), true);
+                KeyCode::Char('x') => {
+                    app.stop_selected_server();
                 }
+                KeyCode::Char('b') => {
+                    if app.selected_server().is_some() {
+                        app.input_mode = InputMode::PromptBatchLaunch(crate::admin::headless_client::Scenario::ConnectStorm);
+                        app.input_buffer.clear();
+                    } else {
+                        app.set_toast("Select a server first (press 's' to start one).".to_string(), true);
+                    }
+                }
+                KeyCode::Char('c') => {
+                    if app.selected_server().is_some() {
+                        app.input_mode = InputMode::PromptBatchLaunch(crate::admin::headless_client::Scenario::Chatty);
+                        app.input_buffer.clear();
+                    } else {
+                        app.set_toast("Select a server first (press 's' to start one).".to_string(), true);
+                    }
+                }
+                KeyCode::Char('d') => {
+                    let id_opt = app.selected_server().map(|s| s.id);
+                    if let Some(id) = id_opt {
+                        app.disconnect_clients(id);
+                    } else {
+                        app.set_toast("No server selected.".to_string(), true);
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.select_prev();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.select_next();
+                }
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    app.should_quit = true;
+                }
+                _ => {}
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                app.select_prev();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                app.select_next();
-            }
-            KeyCode::Char('q') | KeyCode::Esc => {
-                app.should_quit = true;
-            }
-            _ => {}
-        },
+        }
 
         InputMode::PromptStartServer => match code {
             KeyCode::Enter => {
@@ -142,7 +175,7 @@ fn handle_key_event(app: &mut AdminApp, code: KeyCode) {
             _ => {}
         },
 
-        InputMode::PromptBatchLaunch => match code {
+        InputMode::PromptBatchLaunch(scenario) => match code {
             KeyCode::Enter => {
                 let input = app.input_buffer.trim().to_string();
                 app.input_mode = InputMode::Normal;
@@ -151,7 +184,7 @@ fn handle_key_event(app: &mut AdminApp, code: KeyCode) {
                 let count: usize = parts.first().and_then(|s| s.parse().ok()).unwrap_or(100);
                 let rate: usize = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(50);
 
-                app.batch_launch_selected(count, rate);
+                app.batch_launch_selected(count, rate, scenario);
             }
             KeyCode::Esc => {
                 app.input_mode = InputMode::Normal;
@@ -167,3 +200,4 @@ fn handle_key_event(app: &mut AdminApp, code: KeyCode) {
         },
     }
 }
+

@@ -1,5 +1,5 @@
-use crate::admin::headless_client::{CancellationToken, headless_connect};
-use crate::admin::metrics::RollingHistory;
+use crate::admin::headless_client::{CancellationToken, Scenario, headless_connect};
+use crate::admin::metrics::{MetricsSnapshot, RollingHistory, aggregate_snapshots};
 use crate::admin::server_manager::{ManagedServer, ServerManager, ServerStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,21 +8,15 @@ use std::time::{Duration, Instant};
 /// The input mode of the TUI interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
-    /// Normal navigation mode (arrow keys, hotkeys: s, x, b, d, q).
+    /// Normal navigation mode (arrow keys, hotkeys: s, x, b, c, a, d, ?, q).
     Normal,
     /// User is entering an address to bind a new server (e.g. "127.0.0.1:9000").
     PromptStartServer,
-    /// User is entering batch count and ramp rate (e.g. "500 50").
-    PromptBatchLaunch,
+    /// User is entering batch count and ramp rate with a specific scenario (ConnectStorm or Chatty).
+    PromptBatchLaunch(Scenario),
 }
 
 /// The state container for the Alyson Admin TUI application.
-///
-/// # Architecture:
-/// - Coordinates the [`ServerManager`] for OS child process lifecycle.
-/// - Stores a [`RollingHistory`] circular buffer per server to drive real-time sparkline graphs.
-/// - Maintains active [`CancellationToken`] handles for headless client batches so they can be disconnected on demand.
-/// - Completely decouples UI rendering from async worker tasks.
 pub struct AdminApp {
     /// Process orchestrator managing child servers.
     pub server_manager: ServerManager,
@@ -38,6 +32,10 @@ pub struct AdminApp {
     pub input_buffer: String,
     /// Toast notification or error message with an expiration timestamp.
     pub toast: Option<(Instant, String, bool)>, // (timestamp, text, is_error)
+    /// Toggle between single server metrics and multi-server total aggregated metrics.
+    pub view_aggregate: bool,
+    /// Toggle whether the Help Screen modal overlay is visible.
+    pub show_help_modal: bool,
     /// Flag signalling the TUI main loop to exit.
     pub should_quit: bool,
     /// Timestamp of the last 250ms metrics snapshot tick.
@@ -61,6 +59,8 @@ impl AdminApp {
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
             toast: None,
+            view_aggregate: false,
+            show_help_modal: false,
             should_quit: false,
             last_snapshot_tick: Instant::now(),
         }
@@ -142,7 +142,7 @@ impl AdminApp {
     }
 
     /// Batch launch N headless clients to the selected server at the specified ramp rate.
-    pub fn batch_launch_selected(&mut self, count: usize, ramp_rate: usize) {
+    pub fn batch_launch_selected(&mut self, count: usize, ramp_rate: usize, scenario: Scenario) {
         let selected = self
             .selected_server()
             .map(|s| (s.id, s.addr.clone(), s.status.clone(), Arc::clone(&s.metrics)));
@@ -180,15 +180,76 @@ impl AdminApp {
                 let c = cancel.clone();
 
                 tokio::spawn(async move {
-                    let _ = headless_connect(addr, username, m, c).await;
+                    let _ = headless_connect(addr, username, m, c, scenario).await;
                 });
 
                 tokio::time::sleep(interval).await;
             }
         });
 
+        let scenario_label = match scenario {
+            Scenario::ConnectStorm => "Connect-Storm",
+            Scenario::Chatty => "Chatty",
+        };
+
         self.set_toast(
-            format!("Launching {} clients to srv-{} at {}/sec", count, server_id, ramp_rate),
+            format!(
+                "Launching {} {} clients to srv-{} at {}/sec",
+                count, scenario_label, server_id, ramp_rate
+            ),
+            false,
+        );
+    }
+
+    /// Batch launch N headless clients evenly distributed across all running servers.
+    pub fn batch_launch_all(&mut self, count: usize, ramp_rate: usize, scenario: Scenario) {
+        let running_servers: Vec<(usize, String, Arc<_>)> = self
+            .server_manager
+            .servers()
+            .iter()
+            .filter(|s| s.status == ServerStatus::Running)
+            .map(|s| (s.id, s.addr.clone(), Arc::clone(&s.metrics)))
+            .collect();
+
+        if running_servers.is_empty() {
+            self.set_toast("No running servers available for multi-server batch.".to_string(), true);
+            return;
+        }
+
+        let total_servers = running_servers.len();
+        let per_server_count = (count / total_servers).max(1);
+        let per_server_rate = (ramp_rate / total_servers).max(1);
+
+        for (id, addr, metrics) in running_servers {
+            let cancel = CancellationToken::new();
+            if let Some(tokens) = self.client_tokens.get_mut(&id) {
+                tokens.push(cancel.clone());
+            }
+
+            let interval = Duration::from_secs_f64(1.0 / per_server_rate as f64);
+            tokio::spawn(async move {
+                for i in 0..per_server_count {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let username = format!("multi_bot_{}_{}", id, i);
+                    let a = addr.clone();
+                    let m = Arc::clone(&metrics);
+                    let c = cancel.clone();
+
+                    tokio::spawn(async move {
+                        let _ = headless_connect(a, username, m, c, scenario).await;
+                    });
+                    tokio::time::sleep(interval).await;
+                }
+            });
+        }
+
+        self.set_toast(
+            format!(
+                "Launched multi-server batch across {} servers ({} total clients)",
+                total_servers, per_server_count * total_servers
+            ),
             false,
         );
     }
@@ -200,13 +261,26 @@ impl AdminApp {
             for token in tokens.drain(..) {
                 token.cancel();
             }
-            self.set_toast(format!("Disconnected all clients on srv-{} ({} batches)", server_id, count), false);
+            self.set_toast(
+                format!("Disconnected all clients on srv-{} ({} batches)", server_id, count),
+                false,
+            );
         }
     }
 
+    /// Compute an aggregated point-in-time metrics snapshot across all managed servers.
+    pub fn aggregate_snapshot(&self) -> MetricsSnapshot {
+        let snapshots: Vec<MetricsSnapshot> = self
+            .server_manager
+            .servers()
+            .iter()
+            .map(|s| s.metrics.snapshot())
+            .collect();
+
+        aggregate_snapshots(&snapshots)
+    }
+
     /// Periodic snapshot tick executed every ~250ms.
-    ///
-    /// Freezes point-in-time snapshots and appends them to each server's rolling history.
     pub fn tick_snapshots(&mut self) {
         if self.last_snapshot_tick.elapsed() >= Duration::from_millis(250) {
             self.last_snapshot_tick = Instant::now();
