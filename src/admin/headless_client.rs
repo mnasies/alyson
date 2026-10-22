@@ -1,11 +1,21 @@
 use crate::AlysonError;
 use crate::admin::metrics::ServerMetrics;
-use crate::network::framing::read_framed_loop;
-use crate::types::ServerEvent;
+use crate::network::framing::{read_framed_loop, write_framed_loop};
+use crate::types::{ClientRequest, InboxEntry, ServerEvent};
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
+
+/// Load testing scenario to run for connected headless clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scenario {
+    /// Connect and hold connection open (tests socket capacity & listener queue).
+    ConnectStorm,
+    /// Connect and periodically send chat messages to measure round-trip latency and msg throughput.
+    Chatty,
+}
 
 /// A lightweight cooperative cancellation token using `tokio::sync::watch`.
 ///
@@ -59,38 +69,39 @@ impl CancellationToken {
 
 /// Connects a headless client task to a managed server.
 ///
-/// # Why Headless?
-/// Headless clients run without any TUI or terminal rendering overhead.
-/// They execute directly as lightweight `tokio` green threads (tasks), which consume
-/// only a few hundred bytes each instead of a full OS process.
-///
 /// # Lifecycle:
-/// 1. Establish TCP connection (`TcpStream::connect`).
+/// 1. Establish TCP connection (`TcpStream::connect`), capturing fd limit errors (EMFILE/ENFILE) gracefully.
 /// 2. Perform protocol handshake (send username string, receive numeric client ID).
-/// 3. Update `ServerMetrics` (bump `total_connects` and `active_connections`).
-/// 4. Spawn a framed reader task to consume incoming server broadcasts.
-/// 5. Wait until either:
-///    - The `CancellationToken` is cancelled by the admin.
-///    - The server closes the connection / drops TCP socket.
-/// 6. On exit: decrement `active_connections`.
+/// 3. Update `ServerMetrics` (record connection latency, bump `total_connects` and `active_connections`).
+/// 4. If `Scenario::Chatty`, spawn periodic message sender and framed writer.
+/// 5. Spawn framed reader task to consume server events and measure round-trip latency.
+/// 6. Wait until cancelled or severed, then cleanly decrement `active_connections`.
 pub async fn headless_connect(
     server_addr: String,
     username: String,
     metrics: Arc<ServerMetrics>,
     cancel: CancellationToken,
+    scenario: Scenario,
 ) -> Result<u64, AlysonError> {
-    let start_time = std::time::Instant::now();
+    let start_time = Instant::now();
 
     // 1. Establish TCP connection
     let mut stream = match TcpStream::connect(&server_addr).await {
         Ok(s) => s,
         Err(e) => {
+            // Check for OS file descriptor limit exhaustion (EMFILE / ENFILE)
+            if let Some(code) = e.raw_os_error() {
+                if code == libc::EMFILE || code == libc::ENFILE {
+                    metrics.record_fd_limit_error();
+                    return Err(AlysonError::from(e));
+                }
+            }
             metrics.record_connect_failure();
             return Err(AlysonError::from(e));
         }
     };
 
-    // Disable Nagle's algorithm (TCP_NODELAY) for lower latency
+    // Disable Nagle's algorithm (TCP_NODELAY) for minimal latency
     let _ = stream.set_nodelay(true);
 
     // 2. Protocol Handshake:
@@ -102,7 +113,7 @@ pub async fn headless_connect(
     }
 
     // Split stream into reader and writer halves
-    let (read_half, _write_half) = stream.into_split();
+    let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
     // Server responds with the assigned client ID on the first line
@@ -127,7 +138,51 @@ pub async fn headless_connect(
     // 3. Mark successful connection in metrics
     metrics.record_connect();
 
-    // 4. Spawn background framed reader loop
+    // 4. In Chatty scenario: spawn framed writer and periodic sender loop
+    if scenario == Scenario::Chatty {
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientRequest>(32);
+        let cancel_writer = cancel.clone();
+
+        // Writer task
+        tokio::spawn(async move {
+            let on_write_err = async move |_err: AlysonError| {};
+            tokio::select! {
+                _ = write_framed_loop(write_half, cmd_rx, on_write_err) => {}
+                _ = cancel_writer.cancelled() => {}
+            }
+        });
+
+        // Periodic sender task (sends message every 150ms)
+        let cancel_sender = cancel.clone();
+        let metrics_sender = Arc::clone(&metrics);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(150));
+
+            while !cancel_sender.is_cancelled() {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let entry = InboxEntry::new(
+                            SystemTime::now(),
+                            "chatty probe".to_string(),
+                            client_id,
+                            client_id,
+                            true,
+                        );
+                        if cmd_tx.send(ClientRequest::ChatMessage(entry)).await.is_ok() {
+                            metrics_sender.msgs_out.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        } else {
+                            break;
+                        }
+                    }
+                    _ = cancel_sender.cancelled() => {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    // 5. Spawn background framed reader loop
     let metrics_reader = Arc::clone(&metrics);
     let cancel_for_reader = cancel.clone();
 
@@ -138,7 +193,18 @@ pub async fn headless_connect(
             metrics_for_entry
                 .msgs_in
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = msg;
+
+            // If this is an echo of our own live ChatMessage probe, measure round-trip latency.
+            // We verify entry.content and ensure rtt < 5s to ignore historical messages replayed from DB.
+            if let ServerEvent::ChatMessage(entry) = msg {
+                if entry.msg == "chatty probe" && entry.from == client_id {
+                    if let Ok(rtt) = SystemTime::now().duration_since(entry.time) {
+                        if rtt < Duration::from_secs(5) {
+                            metrics_for_entry.record_roundtrip_latency(rtt);
+                        }
+                    }
+                }
+            }
             Ok(())
         };
 
@@ -157,7 +223,7 @@ pub async fn headless_connect(
             }
         }
 
-        // 5. Cleanup on disconnect
+        // 6. Cleanup on disconnect
         metrics_reader.record_disconnect();
     });
 

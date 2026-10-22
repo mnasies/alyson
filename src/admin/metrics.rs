@@ -24,6 +24,9 @@ pub struct ServerMetrics {
     /// Lifetime total number of failed connection attempts (e.g. ECONNREFUSED, timeout, fd limits).
     pub connect_failures: AtomicU64,
 
+    /// Number of failures specifically caused by reaching OS file descriptor limits (EMFILE / ENFILE).
+    pub fd_limit_errors: AtomicU64,
+
     /// Total messages received from the server.
     pub msgs_in: AtomicU64,
 
@@ -83,6 +86,7 @@ impl ServerMetrics {
             active_connections: AtomicU64::new(0),
             total_connects: AtomicU64::new(0),
             connect_failures: AtomicU64::new(0),
+            fd_limit_errors: AtomicU64::new(0),
             msgs_in: AtomicU64::new(0),
             msgs_out: AtomicU64::new(0),
             bytes_in: AtomicU64::new(0),
@@ -109,9 +113,25 @@ impl ServerMetrics {
             });
     }
 
-    /// Record a failed connection attempt (server down, port closed, EMFILE, etc.).
+    /// Record a failed connection attempt (server down, port closed, etc.).
     pub fn record_connect_failure(&self) {
         self.connect_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failure specifically triggered by OS file descriptor exhaustion (EMFILE / ENFILE).
+    pub fn record_fd_limit_error(&self) {
+        self.fd_limit_errors.fetch_add(1, Ordering::Relaxed);
+        self.connect_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record an outgoing message sent over the wire.
+    pub fn record_msg_out(&self) {
+        self.msgs_out.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record an incoming message received over the wire.
+    pub fn record_msg_in(&self) {
+        self.msgs_in.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record the duration of a TCP connect and initial handshake.
@@ -183,6 +203,7 @@ impl ServerMetrics {
             active_connections: self.active_connections.load(Ordering::Relaxed),
             total_connects: self.total_connects.load(Ordering::Relaxed),
             connect_failures: self.connect_failures.load(Ordering::Relaxed),
+            fd_limit_errors: self.fd_limit_errors.load(Ordering::Relaxed),
             msgs_in: self.msgs_in.load(Ordering::Relaxed),
             msgs_out: self.msgs_out.load(Ordering::Relaxed),
             bytes_in: self.bytes_in.load(Ordering::Relaxed),
@@ -204,6 +225,7 @@ pub struct MetricsSnapshot {
     pub active_connections: u64,
     pub total_connects: u64,
     pub connect_failures: u64,
+    pub fd_limit_errors: u64,
     pub msgs_in: u64,
     pub msgs_out: u64,
     pub bytes_in: u64,
@@ -235,11 +257,95 @@ impl MetricsSnapshot {
         format_micros(self.connect_latency_p99_us)
     }
 
+    /// Format round-trip latency p50 into a friendly human string (µs or ms).
+    pub fn roundtrip_latency_p50_str(&self) -> String {
+        format_micros(self.roundtrip_latency_p50_us)
+    }
+
+    /// Format round-trip latency p99 into a friendly human string (µs or ms).
+    pub fn roundtrip_latency_p99_str(&self) -> String {
+        format_micros(self.roundtrip_latency_p99_us)
+    }
+
     /// Format memory into Megabytes.
     pub fn memory_mb(&self) -> f64 {
         self.memory_bytes as f64 / (1024.0 * 1024.0)
     }
 }
+
+/// Aggregate metrics snapshots across multiple servers into a unified summary.
+pub fn aggregate_snapshots(snapshots: &[MetricsSnapshot]) -> MetricsSnapshot {
+    if snapshots.is_empty() {
+        return MetricsSnapshot {
+            active_connections: 0,
+            total_connects: 0,
+            connect_failures: 0,
+            fd_limit_errors: 0,
+            msgs_in: 0,
+            msgs_out: 0,
+            bytes_in: 0,
+            bytes_out: 0,
+            connect_latency_p50_us: 0,
+            connect_latency_p99_us: 0,
+            roundtrip_latency_p50_us: 0,
+            roundtrip_latency_p99_us: 0,
+            cpu_percent: 0.0,
+            memory_bytes: 0,
+            timestamp: Instant::now(),
+        };
+    }
+
+    let mut total_active = 0;
+    let mut total_connects = 0;
+    let mut total_failures = 0;
+    let mut total_fd_errors = 0;
+    let mut total_msgs_in = 0;
+    let mut total_msgs_out = 0;
+    let mut total_bytes_in = 0;
+    let mut total_bytes_out = 0;
+    let mut total_cpu = 0.0;
+    let mut total_memory = 0;
+    let mut max_connect_p50 = 0;
+    let mut max_connect_p99 = 0;
+    let mut max_rtt_p50 = 0;
+    let mut max_rtt_p99 = 0;
+
+    for s in snapshots {
+        total_active += s.active_connections;
+        total_connects += s.total_connects;
+        total_failures += s.connect_failures;
+        total_fd_errors += s.fd_limit_errors;
+        total_msgs_in += s.msgs_in;
+        total_msgs_out += s.msgs_out;
+        total_bytes_in += s.bytes_in;
+        total_bytes_out += s.bytes_out;
+        total_cpu += s.cpu_percent;
+        total_memory += s.memory_bytes;
+        max_connect_p50 = max_connect_p50.max(s.connect_latency_p50_us);
+        max_connect_p99 = max_connect_p99.max(s.connect_latency_p99_us);
+        max_rtt_p50 = max_rtt_p50.max(s.roundtrip_latency_p50_us);
+        max_rtt_p99 = max_rtt_p99.max(s.roundtrip_latency_p99_us);
+    }
+
+    MetricsSnapshot {
+        active_connections: total_active,
+        total_connects,
+        connect_failures: total_failures,
+        fd_limit_errors: total_fd_errors,
+        msgs_in: total_msgs_in,
+        msgs_out: total_msgs_out,
+        bytes_in: total_bytes_in,
+        bytes_out: total_bytes_out,
+        connect_latency_p50_us: max_connect_p50,
+        connect_latency_p99_us: max_connect_p99,
+        roundtrip_latency_p50_us: max_rtt_p50,
+        roundtrip_latency_p99_us: max_rtt_p99,
+        cpu_percent: total_cpu,
+        memory_bytes: total_memory,
+        timestamp: Instant::now(),
+    }
+}
+
 
 fn format_micros(micros: u64) -> String {
     if micros == 0 {
