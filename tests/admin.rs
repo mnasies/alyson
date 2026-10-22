@@ -1,6 +1,6 @@
-use alyson::admin::headless_client::{CancellationToken, headless_connect};
+use alyson::admin::headless_client::{CancellationToken, Scenario, headless_connect};
 use alyson::admin::load_test::run_connect_storm;
-use alyson::admin::metrics::ServerMetrics;
+use alyson::admin::metrics::{ServerMetrics, aggregate_snapshots};
 use alyson::admin::server_manager::{ServerStatus, start_server};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +39,7 @@ async fn test_headless_client_connect_and_metrics() {
         "test_bot_1".to_string(),
         Arc::clone(&metrics),
         cancel.clone(),
+        Scenario::ConnectStorm,
     )
     .await
     .expect("Headless client failed to connect and handshake");
@@ -226,14 +227,22 @@ async fn test_admin_app_batch_and_snapshots() {
     let server_id = app.selected_server().map(|s| s.id).unwrap();
 
     // Launch 3 headless clients to this server
-    app.batch_launch_selected(3, 50);
+    app.batch_launch_selected(3, 50, Scenario::ConnectStorm);
 
-    // Wait 300ms for connections to establish
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Simulate 250ms snapshot tick
-    app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
-    app.tick_snapshots();
+    // Wait for connections to establish and tick snapshots
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
+        app.tick_snapshots();
+        if let Some(history) = app.history.get(&server_id) {
+            if let Some(latest) = history.latest() {
+                if latest.total_connects == 3 && latest.active_connections == 3 {
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let history = app.history.get(&server_id).expect("History must exist for server");
     assert!(!history.entries.is_empty(), "Snapshot must be recorded in history");
@@ -243,13 +252,152 @@ async fn test_admin_app_batch_and_snapshots() {
 
     // Disconnect clients
     app.disconnect_clients(server_id);
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
-    app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
-    app.tick_snapshots();
+    let disconnect_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < disconnect_deadline {
+        app.last_snapshot_tick = std::time::Instant::now() - Duration::from_millis(300);
+        app.tick_snapshots();
+        if let Some(history) = app.history.get(&server_id) {
+            if let Some(latest) = history.latest() {
+                if latest.active_connections == 0 {
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let latest_after = app.history.get(&server_id).unwrap().latest().unwrap();
     assert_eq!(latest_after.active_connections, 0);
 
     app.server_manager.stop_all();
+}
+
+#[tokio::test]
+async fn test_chatty_scenario_rtt() {
+    let mut server = start_server(10, "127.0.0.1:0").expect("Failed to start server");
+    let metrics = Arc::new(ServerMetrics::new());
+    let cancel = CancellationToken::new();
+
+    // Connect a chatty client (sends periodic chat pings and awaits echo)
+    let client_id = headless_connect(
+        server.addr.clone(),
+        "chatty_bot".to_string(),
+        Arc::clone(&metrics),
+        cancel.clone(),
+        Scenario::Chatty,
+    )
+    .await
+    .expect("Chatty client failed to connect");
+
+    assert!(client_id > 0);
+
+    // Wait until echo is returned and roundtrip latency is recorded
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut recorded_rtt = false;
+
+    while std::time::Instant::now() < deadline {
+        let snap = metrics.snapshot();
+        if snap.roundtrip_latency_p50_us > 0 {
+            recorded_rtt = true;
+            assert!(snap.msgs_out > 0);
+            assert!(snap.msgs_in > 0);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(recorded_rtt, "Chatty client should send and receive chat messages within 3s");
+
+    cancel.cancel();
+    server.stop().expect("Failed to stop server");
+}
+
+#[tokio::test]
+async fn test_aggregate_snapshots() {
+    let m1 = ServerMetrics::new();
+    let m2 = ServerMetrics::new();
+
+    m1.record_connect();
+    m1.record_connect();
+    m1.record_connect_latency(Duration::from_millis(10));
+    m1.record_msg_out();
+    m1.record_msg_in();
+
+    m2.record_connect();
+    m2.record_connect_failure();
+    m2.record_fd_limit_error(); // EMFILE fd limit error
+    m2.record_connect_latency(Duration::from_millis(50));
+    m2.record_msg_out();
+
+    let snap1 = m1.snapshot();
+    let snap2 = m2.snapshot();
+
+    let agg = aggregate_snapshots(&[snap1, snap2]);
+
+    assert_eq!(agg.total_connects, 3);
+    assert_eq!(agg.active_connections, 3);
+    assert_eq!(agg.connect_failures, 2);
+    assert_eq!(agg.fd_limit_errors, 1);
+    assert_eq!(agg.msgs_out, 2);
+    assert_eq!(agg.msgs_in, 1);
+
+    // Max latency p99 across servers should reflect the higher one (~50ms)
+    assert!(agg.connect_latency_p99_us >= 40_000);
+}
+
+#[tokio::test]
+async fn test_multi_server_batch_and_aggregate() {
+    use alyson::admin::AdminApp;
+
+    let mut app = AdminApp::new();
+
+    // Start 2 servers
+    app.start_server("127.0.0.1:0");
+    app.start_server("127.0.0.1:0");
+    assert_eq!(app.server_manager.servers().len(), 2);
+
+    // Distribute 4 clients across all running servers
+    app.batch_launch_all(4, 50, Scenario::ConnectStorm);
+
+    // Wait for connections to establish across all servers
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        let agg = app.aggregate_snapshot();
+        if agg.active_connections == 4 && agg.total_connects == 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // In aggregate mode, active connections across both servers should equal 4
+    let agg = app.aggregate_snapshot();
+    assert_eq!(agg.active_connections, 4);
+    assert_eq!(agg.total_connects, 4);
+
+    // Toggle aggregate mode
+    app.view_aggregate = true;
+    assert!(app.view_aggregate);
+
+    app.server_manager.stop_all();
+}
+
+#[tokio::test]
+async fn test_fd_limit_error_handling() {
+    let metrics = ServerMetrics::new();
+    assert_eq!(metrics.fd_limit_errors.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+    // Simulate standard connection failure
+    metrics.record_connect_failure();
+    assert_eq!(metrics.connect_failures.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(metrics.fd_limit_errors.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+    // Simulate EMFILE / ENFILE OS file descriptor exhaustion
+    metrics.record_fd_limit_error();
+    assert_eq!(metrics.connect_failures.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert_eq!(metrics.fd_limit_errors.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    let snap = metrics.snapshot();
+    assert_eq!(snap.fd_limit_errors, 1);
+    assert_eq!(snap.connect_failures, 2);
 }
