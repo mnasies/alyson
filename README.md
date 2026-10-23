@@ -138,3 +138,67 @@ The client connects over TCP, negotiates a username, and renders an interactive 
 | `Esc` | Typing | Exit typing mode or clear current text buffer. |
 | `PageUp` / `PageDown` | Chat Pane | Scroll message history up and down. |
 | `q` | Normal Mode | Exit chat client and cleanly restore terminal settings. |
+
+---
+
+## How It Works
+
+### Architecture Overview
+
+```mermaid
+graph TD
+    subgraph Client [TUI Client Process]
+        TUI[Ratatui UI Loop]
+        CH[Async Reader/Writer Tasks]
+        TUI <-->|mpsc channels| CH
+    end
+
+    subgraph Server [Alyson TCP Server Process]
+        AL[TcpListener Accept Loop]
+        ST[Per-Client Tasks]
+        DB[(SQLite WAL DB)]
+        AL --> ST
+        ST <--> DB
+    end
+
+    CH <-->|Length-Prefixed Binary Frame<br/>4-byte length + Bincode| ST
+```
+
+### Admin Load Test Architecture
+
+```mermaid
+graph LR
+    Admin[alyson-admin TUI]
+    SM[ServerManager]
+    Bots[Headless Client Bots]
+    Srv[Child Server Process]
+    Hist[HdrHistogram Telemetry]
+
+    Admin -->|spawns/monitors| SM
+    SM -->|SIGTERM / PID| Srv
+    Admin -->|ramps up| Bots
+    Bots -->|Connect-Storm / Chatty Probes| Srv
+    Srv -->|echoes ChatMessage| Bots
+    Bots -->|record latency| Hist
+    Hist -->|percentiles p50..p99| Admin
+```
+
+### Protocol & Wire Framing
+
+Communication across sockets uses a two-phase protocol:
+
+1. **Handshake Phase:**
+   - The connecting client sends its UTF-8 username terminated by newline: `<username>\n`.
+   - The server registers the client in SQLite, assigns a `u64` client ID, and replies with: `<client_id>\n`.
+
+2. **Framing & Payload Phase:**
+   Every message frame contains:
+   - **Header:** A 4-byte big-endian unsigned integer (`u32`) indicating payload byte size.
+   - **Payload:** Bincode-serialized `ClientRequest` or `ServerEvent` struct.
+   - **Guard limit:** Payloads exceeding 10 MB are rejected before allocation to protect against socket flooding.
+
+### Latency Measurement Mechanics
+
+When running a `Chatty` load test, headless clients transmit a `ClientRequest::ChatMessage` containing a timestamp probe. When the server echoes this message back to the sender, the client measures elapsed time:
+$$\text{RTT} = \text{SystemTime::now()} - \text{entry.time}$$
+The duration is clamped and recorded into a pre-allocated `HdrHistogram` (1µs to 60s dynamic range, 3 significant digits). This yields true end-to-end percentiles without runtime heap reallocations.
