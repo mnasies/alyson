@@ -68,3 +68,53 @@ Launch the interactive monitoring dashboard:
 ```bash
 cargo run --bin admin
 ```
+
+---
+
+## Admin Workbench & Load Testing
+
+The `alyson-admin` binary is both an interactive TUI dashboard and a CLI load-testing tool.
+
+### Interactive TUI Keybindings
+
+When running `cargo run --bin admin`:
+
+| Key | Action | Description |
+|---|---|---|
+| `s` | **Start Server** | Prompts for bind address (e.g. `127.0.0.1:0` for ephemeral port) and spawns child server process. |
+| `b` | **Connect-Storm** | Prompts for `<count> [rate]`. Ramps up $N$ clients at rate/sec and holds them open. |
+| `c` | **Chatty Batch** | Prompts for `<count> [rate]`. Clients connect and send periodic chat messages, measuring RTT. |
+| `m` | **Multi-Server Batch** | Evenly distributes a batch across all running child server processes. |
+| `d` | **Disconnect Batch** | Disconnects all client batches targeting the selected server. |
+| `x` | **Stop Server** | Sends `SIGTERM` (5s graceful timeout -> `SIGKILL`) to the selected child server. |
+| `a` | **Aggregate Mode** | Toggles multi-server summary mode (sums connections, messages, CPU/RSS across all servers). |
+| `↑` / `↓`, `k` / `j` | **Select Server** | Switches active inspection target between managed child servers. |
+| `?` / `h` | **Help Overlay** | Toggles the help and keybinding modal window. |
+| `q` / `Esc` | **Quit** | Shuts down all child server processes cleanly and exits to shell. |
+
+### Headless CLI Load Testing
+
+For automated benchmarks, headless load tests can run without the TUI:
+
+```bash
+# Run a 200-client connection storm at 50 connects/sec:
+cargo run --bin admin -- storm 127.0.0.1:9000 200 50
+
+# Run a 50-client chatty messaging test at 25 connects/sec:
+cargo run --bin admin -- chatty 127.0.0.1:9000 50 25
+```
+
+Both subcommands print live 1-second progress lines and a final summary:
+```text
+[ 10.0s] active: 50   tot: 50   fail: 0  (fd: 0) | msgs out/in: 250/250 | conn p99: 1.2ms | rtt p99: 3.4ms | CPU: 12.5% | RSS: 18.2MB
+
+📊 Chatty (Active Messaging) Finished. Summary:
+   • Active connections: 50
+   • Total connected:    50
+   • Connect failures:   0 (fd limit: 0)
+   • Messages Sent:      250
+   • Messages Received:  250
+   • Connect Latency:    p50: 820µs | p99: 1.2ms
+   • Roundtrip Latency:  p50: 1.4ms | p99: 3.4ms
+   • Process Resources:  CPU: 12.5% | RSS: 18.2MB
+```
