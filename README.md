@@ -118,3 +118,23 @@ Both subcommands print live 1-second progress lines and a final summary:
    • Roundtrip Latency:  p50: 1.4ms | p99: 3.4ms
    • Process Resources:  CPU: 12.5% | RSS: 18.2MB
 ```
+
+---
+
+## Chat Client TUI
+
+![Alyson Chat Client](assets/client-chat.png)
+
+The client connects over TCP, negotiates a username, and renders an interactive terminal chat interface with real-time room updates and message speech bubbles.
+
+### Client Keybindings
+
+| Key | Context | Action |
+|---|---|---|
+| `Tab` / `Shift+Tab` | Any | Cycle focus between Sidebar (users/rooms), Action pane, and Message Input. |
+| `↑` / `↓` | Sidebar / Lists | Navigate room list or online users roster. |
+| `Enter` | Input Box | Send current chat message to active room or peer. |
+| `Enter` | Sidebar Item | Join selected room or open direct message channel. |
+| `Esc` | Typing | Exit typing mode or clear current text buffer. |
+| `PageUp` / `PageDown` | Chat Pane | Scroll message history up and down. |
+| `q` | Normal Mode | Exit chat client and cleanly restore terminal settings. |
