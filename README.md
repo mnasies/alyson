@@ -239,3 +239,18 @@ The 12 integration tests in `tests/admin.rs` test:
 - **`test_aggregate_snapshots`**: Multi-server metric aggregation picking maximum p99 latency and summing counters.
 - **`test_multi_server_batch_and_aggregate`**: Even distribution of client batches across multiple running child servers.
 - **`test_fd_limit_error_handling`**: Graceful handling and counting of OS file descriptor exhaustion (`EMFILE`/`ENFILE`).
+
+---
+
+## Limitations & Rough Edges
+
+- **Single SQLite Database File:** All server instances currently open `./alyson.db`. SQLite WAL mode allows concurrent readers, but heavy concurrent writes across multiple servers will eventually hit write-lock contention (`busy_timeout`).
+- **Local Process Discovery:** `ServerManager` locates the server binary by checking `target/debug/server` or `target/release/server`. Building with custom target directories requires running `cargo build` first.
+- **Terminal Minimum Dimensions:** Both the client and admin TUIs require at least 80x24 characters. Smaller windows may truncate table columns.
+- **Raw OS Socket Limits:** Ramping thousands of clients locally hits the OS file descriptor limit (`ulimit -n`). The admin tracks `EMFILE` errors cleanly without panicking, but testing beyond ~10,000 clients requires raising your shell's `ulimit -n 65535`.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE) (or Apache-2.0 at your option).
