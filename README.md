@@ -1,136 +1,256 @@
 # Alyson
 
-Alyson is a terminal-based multi-client TCP inspection and messaging system written in Rust. It provides a real-time terminal user interface for spawning TCP clients, managing rooms, and inspecting bidirectional message traffic across socket connections.
+A terminal-native chat system and real-time TCP load testing workbench written in Rust.
 
-## Architecture
+![Alyson Admin TUI Dashboard](assets/admin-dashboard.png)
 
-Alyson separates terminal interface execution from asynchronous networking logic using message-passing channels.
+Alyson combines a multi-room messaging server and client with an in-terminal admin workbench. You can chat with other users across rooms, or switch to the admin dashboard to spin up child servers, flood them with hundreds of headless bots, and graph connection latency and process resources in real time.
 
+---
+
+## Why I Built This
+
+I wanted to build a real-time messaging system from scratch to understand three things deeply:
+1. **Custom binary framing over raw TCP:** Length-prefixed framing with Bincode instead of relying on HTTP or WebSockets.
+2. **Async socket multiplexing:** Coordinating hundreds of client streams using Tokio tasks, channels, and SQLite in WAL mode.
+3. **Terminal user interfaces:** Building flicker-free, responsive dashboards with Ratatui and Crossterm.
+
+Along the way, verifying concurrency by manually opening 10 terminal windows got old fast. So I built `alyson-admin`: a dedicated load-testing harness that spins up server processes on ephemeral ports, ramps up connect-storms, fires active chat probes to calculate true round-trip latency (RTT) percentiles with HdrHistogram, and graphs everything live using ASCII sparklines.
+
+---
+
+## Features
+
+- **Terminal Chat Client:** Multi-room chat, private direct messaging, speech bubbles, roster sidebar, and persistent history backed by SQLite.
+- **Dedicated TCP Server:** Non-blocking Tokio accept loop, length-prefixed binary wire framing, and SQLite in WAL mode for concurrent multi-process reads.
+- **Admin Workbench (`alyson-admin`):**
+  - **Process Supervision:** Launch, monitor, and cleanly terminate child server processes (`SIGTERM` -> `SIGKILL`).
+  - **Connect-Storm Ramping:** Launch hundreds of headless clients at configurable connection rates (e.g. 50/sec) and hold connections open.
+  - **Active Chatty Probes:** Headless bots send periodic chat messages and measure true end-to-end round-trip echo latency.
+  - **Telemetry & Percentiles:** Microsecond-precision `HdrHistogram` percentiles (p50, p90, p99, p99.9), live CPU% and RSS memory sampling via `sysinfo`.
+  - **Ratatui Dashboard:** Live ASCII sparklines for CPU, memory, and active connections, server switcher, help screen overlay, and multi-server aggregate views.
+
+---
+
+## Quickstart
+
+### Prerequisites
+
+- [Rust 1.75+](https://www.rust-lang.org/tools/install)
+- A terminal with at least 80x24 dimensions
+
+Clone and build:
+```bash
+git clone https://github.com/mnasies/alyson.git
+cd alyson
+cargo build
 ```
-                      +-----------------------------+
-                      |      Ratatui / Crossterm    |
-                      |          TUI Engine         |
-                      +--------------+--------------+
-                                     |
-                          NetworkCommand / NetworkEvent
-                                 (mpsc channels)
-                                     |
-                      +--------------v--------------+
-                      |       Network Engine        |
-                      +-------+-------------+-------+
-                              |             |
-                     Client Handler     Server Accept Loop
-                              |             |
-                      +-------v-------------v-------+
-                      |    Framing Layer (Bincode)  |
-                      +--------------+--------------+
-                                     |
-                              TcpStream (TCP)
-```
 
-The system operates across three decoupled layers:
-
-1. Application Layer: Manages UI rendering state, keyboard event polling, view routing, and local user input buffers.
-2. Network Engine: Coordinates client and server task spawning, routes outbound command requests, and broadcasts incoming network events.
-3. Transport and Framing Layer: Encapsulates serialized message payloads into length-prefixed TCP binary frames.
-
-## Mechanics
-
-### Protocol and Framing
-
-Communication over TCP uses a two-phase protocol:
-
-1. Handshake Phase: Upon establishing a connection, the client transmits a UTF-8 newline-terminated string containing its requested username (`<username>\n`). The server registers the connection, assigns a 64-bit integer client identifier (`u64`), and responds with the assigned ID followed by a newline (`<client_id>\n`).
-2. Message Phase: Subsequent data transfers follow a length-prefixed binary framing layout. Each frame consists of:
-   - Header: A 4-byte big-endian unsigned integer (`u32`) specifying the payload size in bytes.
-   - Payload: A Bincode-encoded payload representing either a `ClientRequest` or `ServerEvent` data structure.
-
-The framing reader validates header lengths against a maximum limit of 10 MB to prevent memory allocation failures from malformed streams.
-
-### Data Structures
-
-Network interactions rely on predefined Rust data structures serialized via Serde and Bincode:
-
-- `ClientRequest`: Outbound messages sent from clients to the server. Variant types include `CreateRoom`, `JoinRoom`, and `ChatMessage`.
-- `ServerEvent`: Inbound messages broadcast from the server to clients. Variant types include `Welcome`, `Roster`, `PeerJoined`, `ClientDisconnected`, `ChatMessage`, `RoomCreated`, `RoomJoined`, and `Error`.
-- `InboxEntry`: Struct containing timestamp, message payload string, sender ID, destination ID, and target flag distinguishing private client messages from room broadcasts.
-- `Room`: Server state struct tracking room ID, title, owner ID, and member ID set (`HashSet<u64>`).
-
-### Server Mechanics
-
-The server binds a `tokio::net::TcpListener` and executes an asynchronous accept loop. Each client connection spawns two Tokio background tasks:
-
-- Reader Task: Reads framed binary payloads from the socket, deserializes `ClientRequest` instances, updates internal state, and routes messages to target client queues.
-- Writer Task: Receives `ServerEvent` items from internal channels, serializes them with length headers, and writes them to the socket.
-
-Shared server state (`ServerState`) uses `Arc<Mutex<...>>` wrappers around client maps and room registries.
-
-### Client Mechanics
-
-Clients maintain a single `TcpStream` split into reader and writer halves. Inbound server events populate the application event channel. Outbound commands generated by user actions are serialized and pushed to the socket writer loop.
-
-### TUI and Panic Recovery
-
-The TUI uses `ratatui` with `crossterm` in alternate screen mode. The application installs a custom panic hook that restores raw terminal mode, exits alternate screen mode, and resets cursor visibility prior to process exit when a panic occurs.
-
-## Components
-
-- `src/main.rs`: Entry point for integrated dev mode. Spawns an in-process TCP server alongside a TUI client engine.
-- `src/lib.rs`: Defines top-level error types (`WireError`) and module declarations.
-- `src/types.rs`: Contains core domain types, serialization structures, client representations, and room definitions.
-- `src/network/mod.rs`: Defines `NetworkEngine`, `NetworkHandle`, `NetworkCommand`, and `NetworkEvent` primitives.
-- `src/network/framing.rs`: Implements `read_framed_loop` and `write_framed_loop` for length-prefixed byte streaming.
-- `src/network/server_side.rs`: Implements connection acceptance, client registration, roster broadcasting, and message routing.
-- `src/network/client_side.rs`: Manages client connection initialization, handshake completion, and event translation.
-- `src/ui/app.rs`: Maintains layout focus state, active buffers, client lists, selection indices, and scroll offsets.
-- `src/ui/dashboard.rs`: Renders the client sidebar, action pane, chat inbox, room interfaces, and message speech bubbles.
-- `src/ui/ui.rs`: Handles home screen rendering, layout constraints, and toast error notifications.
-- `src/ui/mod.rs`: Executes the main event loop, handles keyboard navigation, enforces terminal dimensions, and processes network events.
-- `src/bin/server.rs`: Executable entry point for running a standalone server instance.
-- `src/bin/client.rs`: Executable entry point for running a standalone client instance connected to an external host.
-
-## Used Libraries
-
-- `tokio`: Asynchronous runtime providing TCP networking (`TcpListener`, `TcpStream`), task execution (`tokio::spawn`), and concurrency primitives (`mpsc`, `Mutex`).
-- `ratatui`: Terminal user interface framework for layouts, widgets, rendering frames, and style modifiers.
-- `crossterm`: Cross-platform terminal control library managing raw mode, input polling, key events, and screen buffers.
-- `bincode`: Binary serialization layout providing compact encoding for wire frames.
-- `serde`: Serialization framework providing derive macros for protocol structures.
-- `thiserror`: Error handling utility for defining structured error enums (`WireError`).
-
-## Usage
-
-### Integrated Development Mode
-
-Launch an in-process server and TUI client interface:
-
+### 1. Dev Mode (Server + Client in One Terminal)
+Spawns an internal server on an OS-assigned port and immediately connects a TUI client:
 ```bash
 cargo run
 ```
 
-### Standalone Server
-
-Start a standalone TCP server listening on a specified socket address:
-
+### 2. Standalone Server & Client
+Start a dedicated TCP server listening on a port:
 ```bash
-cargo run --bin server -- serve 127.0.0.1:8080
+cargo run --bin server -- serve 127.0.0.1:9000
 ```
 
-If no address parameter is provided, the server defaults to binding to `127.0.0.1:0`.
-
-### Standalone Client
-
-Connect a standalone TUI client to a running server instance:
-
+In another terminal, connect a chat client:
 ```bash
-cargo run --bin client -- connect 127.0.0.1:8080 --name Alice
+cargo run --bin client -- connect 127.0.0.1:9000 --name Alice
 ```
 
-### Navigation Controls
+### 3. Admin & Load Testing Dashboard
+Launch the interactive monitoring dashboard:
+```bash
+cargo run --bin admin
+```
 
-- Up / Down Arrow Keys: Move selection highlight within lists.
-- Left / Right Arrow Keys: Switch focus between sidebar, action lists, and active windows.
-- Enter: Confirm selection or enter text typing mode.
-- Esc: Cancel typing mode or step back in view hierarchy.
-- PageUp / PageDown: Scroll message history up or down.
-- q: Terminate application and restore terminal settings.
+---
+
+## Admin Workbench & Load Testing
+
+The `alyson-admin` binary is both an interactive TUI dashboard and a CLI load-testing tool.
+
+### Interactive TUI Keybindings
+
+When running `cargo run --bin admin`:
+
+| Key | Action | Description |
+|---|---|---|
+| `s` | **Start Server** | Prompts for bind address (e.g. `127.0.0.1:0` for ephemeral port) and spawns child server process. |
+| `b` | **Connect-Storm** | Prompts for `<count> [rate]`. Ramps up $N$ clients at rate/sec and holds them open. |
+| `c` | **Chatty Batch** | Prompts for `<count> [rate]`. Clients connect and send periodic chat messages, measuring RTT. |
+| `m` | **Multi-Server Batch** | Evenly distributes a batch across all running child server processes. |
+| `d` | **Disconnect Batch** | Disconnects all client batches targeting the selected server. |
+| `x` | **Stop Server** | Sends `SIGTERM` (5s graceful timeout -> `SIGKILL`) to the selected child server. |
+| `a` | **Aggregate Mode** | Toggles multi-server summary mode (sums connections, messages, CPU/RSS across all servers). |
+| `↑` / `↓`, `k` / `j` | **Select Server** | Switches active inspection target between managed child servers. |
+| `?` / `h` | **Help Overlay** | Toggles the help and keybinding modal window. |
+| `q` / `Esc` | **Quit** | Shuts down all child server processes cleanly and exits to shell. |
+
+### Headless CLI Load Testing
+
+For automated benchmarks, headless load tests can run without the TUI:
+
+```bash
+# Run a 200-client connection storm at 50 connects/sec:
+cargo run --bin admin -- storm 127.0.0.1:9000 200 50
+
+# Run a 50-client chatty messaging test at 25 connects/sec:
+cargo run --bin admin -- chatty 127.0.0.1:9000 50 25
+```
+
+Both subcommands print live 1-second progress lines and a final summary:
+```text
+[ 10.0s] active: 50   tot: 50   fail: 0  (fd: 0) | msgs out/in: 250/250 | conn p99: 1.2ms | rtt p99: 3.4ms | CPU: 12.5% | RSS: 18.2MB
+
+📊 Chatty (Active Messaging) Finished. Summary:
+   • Active connections: 50
+   • Total connected:    50
+   • Connect failures:   0 (fd limit: 0)
+   • Messages Sent:      250
+   • Messages Received:  250
+   • Connect Latency:    p50: 820µs | p99: 1.2ms
+   • Roundtrip Latency:  p50: 1.4ms | p99: 3.4ms
+   • Process Resources:  CPU: 12.5% | RSS: 18.2MB
+```
+
+---
+
+## Chat Client TUI
+
+![Alyson Chat Client](assets/client-chat.png)
+
+The client connects over TCP, negotiates a username, and renders an interactive terminal chat interface with real-time room updates and message speech bubbles.
+
+### Client Keybindings
+
+| Key | Context | Action |
+|---|---|---|
+| `Tab` / `Shift+Tab` | Any | Cycle focus between Sidebar (users/rooms), Action pane, and Message Input. |
+| `↑` / `↓` | Sidebar / Lists | Navigate room list or online users roster. |
+| `Enter` | Input Box | Send current chat message to active room or peer. |
+| `Enter` | Sidebar Item | Join selected room or open direct message channel. |
+| `Esc` | Typing | Exit typing mode or clear current text buffer. |
+| `PageUp` / `PageDown` | Chat Pane | Scroll message history up and down. |
+| `q` | Normal Mode | Exit chat client and cleanly restore terminal settings. |
+
+---
+
+## How It Works
+
+### Architecture Overview
+
+```mermaid
+graph TD
+    subgraph Client [TUI Client Process]
+        TUI[Ratatui UI Loop]
+        CH[Async Reader/Writer Tasks]
+        TUI <-->|mpsc channels| CH
+    end
+
+    subgraph Server [Alyson TCP Server Process]
+        AL[TcpListener Accept Loop]
+        ST[Per-Client Tasks]
+        DB[(SQLite WAL DB)]
+        AL --> ST
+        ST <--> DB
+    end
+
+    CH <-->|Length-Prefixed Binary Frame<br/>4-byte length + Bincode| ST
+```
+
+### Admin Load Test Architecture
+
+```mermaid
+graph LR
+    Admin[alyson-admin TUI]
+    SM[ServerManager]
+    Bots[Headless Client Bots]
+    Srv[Child Server Process]
+    Hist[HdrHistogram Telemetry]
+
+    Admin -->|spawns/monitors| SM
+    SM -->|SIGTERM / PID| Srv
+    Admin -->|ramps up| Bots
+    Bots -->|Connect-Storm / Chatty Probes| Srv
+    Srv -->|echoes ChatMessage| Bots
+    Bots -->|record latency| Hist
+    Hist -->|percentiles p50..p99| Admin
+```
+
+### Protocol & Wire Framing
+
+Communication across sockets uses a two-phase protocol:
+
+1. **Handshake Phase:**
+   - The connecting client sends its UTF-8 username terminated by newline: `<username>\n`.
+   - The server registers the client in SQLite, assigns a `u64` client ID, and replies with: `<client_id>\n`.
+
+2. **Framing & Payload Phase:**
+   Every message frame contains:
+   - **Header:** A 4-byte big-endian unsigned integer (`u32`) indicating payload byte size.
+   - **Payload:** Bincode-serialized `ClientRequest` or `ServerEvent` struct.
+   - **Guard limit:** Payloads exceeding 10 MB are rejected before allocation to protect against socket flooding.
+
+### Latency Measurement Mechanics
+
+When running a `Chatty` load test, headless clients transmit a `ClientRequest::ChatMessage` containing a timestamp probe. When the server echoes this message back to the sender, the client measures elapsed time:
+$$\text{RTT} = \text{SystemTime::now()} - \text{entry.time}$$
+The duration is clamped and recorded into a pre-allocated `HdrHistogram` (1µs to 60s dynamic range, 3 significant digits). This yields true end-to-end percentiles without runtime heap reallocations.
+
+---
+
+## Development & Testing
+
+### Verification Commands
+
+Verify compilation across all library modules, binaries, and tests:
+```bash
+cargo check --tests --bins
+```
+
+Run the complete test suite:
+```bash
+cargo test
+```
+
+Run the dedicated `alyson-admin` integration test suite:
+```bash
+cargo test --test admin
+```
+
+### Integration Test Suite Coverage
+
+The 12 integration tests in `tests/admin.rs` test:
+- **`test_server_lifecycle`**: Spawning child processes on ephemeral ports, non-blocking address capture, and clean `SIGTERM`/`SIGKILL` shutdown.
+- **`test_headless_client_connect_and_metrics`**: Single headless bot handshake, assigned ID validation, and metric counter decrements on disconnect.
+- **`test_connect_storm_batch`**: Concurrently ramping 10 clients at 50/sec and verifying atomic connection summaries.
+- **`test_histogram_latency_percentiles`**: Verifying p50 and p99 percentiles recorded into HdrHistogram against known synthetic distributions.
+- **`test_rolling_history_buffer`**: Capacity eviction and FIFO ordering in fixed-size rolling history ring buffers.
+- **`test_sysinfo_sampler_process_stats`**: Background process sampling verifying non-zero RSS memory tracking.
+- **`test_admin_app_lifecycle_and_selection`**: Multi-server start, list navigation (`k`/`j`), and selection index state.
+- **`test_admin_app_batch_and_snapshots`**: TUI snapshot ticker recording rolling history snapshots.
+- **`test_chatty_scenario_rtt`**: Real chat message ping/echo round-trip calculation over live TCP stream.
+- **`test_aggregate_snapshots`**: Multi-server metric aggregation picking maximum p99 latency and summing counters.
+- **`test_multi_server_batch_and_aggregate`**: Even distribution of client batches across multiple running child servers.
+- **`test_fd_limit_error_handling`**: Graceful handling and counting of OS file descriptor exhaustion (`EMFILE`/`ENFILE`).
+
+---
+
+## Limitations & Rough Edges
+
+- **Single SQLite Database File:** All server instances currently open `./alyson.db`. SQLite WAL mode allows concurrent readers, but heavy concurrent writes across multiple servers will eventually hit write-lock contention (`busy_timeout`).
+- **Local Process Discovery:** `ServerManager` locates the server binary by checking `target/debug/server` or `target/release/server`. Building with custom target directories requires running `cargo build` first.
+- **Terminal Minimum Dimensions:** Both the client and admin TUIs require at least 80x24 characters. Smaller windows may truncate table columns.
+- **Raw OS Socket Limits:** Ramping thousands of clients locally hits the OS file descriptor limit (`ulimit -n`). The admin tracks `EMFILE` errors cleanly without panicking, but testing beyond ~10,000 clients requires raising your shell's `ulimit -n 65535`.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE) (or Apache-2.0 at your option).
