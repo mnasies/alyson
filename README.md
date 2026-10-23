@@ -1,6 +1,6 @@
 # Alyson
 
-A terminal-native chat system and real-time TCP load testing workbench written in Rust.
+Alyson is mainly a learning project built to learn about networking fundamentals and important networking concepts.It is a terminal-native chat system with a load testing workbench written in Rust.
 
 ![Alyson Admin TUI Dashboard](assets/admin-dashboard.png)
 
@@ -49,7 +49,7 @@ cargo build
 ### 1. Dev Mode (Server + Client in One Terminal)
 Spawns an internal server on an OS-assigned port and immediately connects a TUI client:
 ```bash
-cargo run
+cargo run --bin alyson
 ```
 
 ### 2. Standalone Server & Client
@@ -141,47 +141,6 @@ The client connects over TCP, negotiates a username, and renders an interactive 
 
 ---
 
-## How It Works
-
-### Architecture Overview
-
-```mermaid
-graph TD
-    subgraph Client [TUI Client Process]
-        TUI[Ratatui UI Loop]
-        CH[Async Reader/Writer Tasks]
-        TUI <-->|mpsc channels| CH
-    end
-
-    subgraph Server [Alyson TCP Server Process]
-        AL[TcpListener Accept Loop]
-        ST[Per-Client Tasks]
-        DB[(SQLite WAL DB)]
-        AL --> ST
-        ST <--> DB
-    end
-
-    CH <-->|Length-Prefixed Binary Frame<br/>4-byte length + Bincode| ST
-```
-
-### Admin Load Test Architecture
-
-```mermaid
-graph LR
-    Admin[alyson-admin TUI]
-    SM[ServerManager]
-    Bots[Headless Client Bots]
-    Srv[Child Server Process]
-    Hist[HdrHistogram Telemetry]
-
-    Admin -->|spawns/monitors| SM
-    SM -->|SIGTERM / PID| Srv
-    Admin -->|ramps up| Bots
-    Bots -->|Connect-Storm / Chatty Probes| Srv
-    Srv -->|echoes ChatMessage| Bots
-    Bots -->|record latency| Hist
-    Hist -->|percentiles p50..p99| Admin
-```
 
 ### Protocol & Wire Framing
 
@@ -224,33 +183,8 @@ Run the dedicated `alyson-admin` integration test suite:
 cargo test --test admin
 ```
 
-### Integration Test Suite Coverage
-
-The 12 integration tests in `tests/admin.rs` test:
-- **`test_server_lifecycle`**: Spawning child processes on ephemeral ports, non-blocking address capture, and clean `SIGTERM`/`SIGKILL` shutdown.
-- **`test_headless_client_connect_and_metrics`**: Single headless bot handshake, assigned ID validation, and metric counter decrements on disconnect.
-- **`test_connect_storm_batch`**: Concurrently ramping 10 clients at 50/sec and verifying atomic connection summaries.
-- **`test_histogram_latency_percentiles`**: Verifying p50 and p99 percentiles recorded into HdrHistogram against known synthetic distributions.
-- **`test_rolling_history_buffer`**: Capacity eviction and FIFO ordering in fixed-size rolling history ring buffers.
-- **`test_sysinfo_sampler_process_stats`**: Background process sampling verifying non-zero RSS memory tracking.
-- **`test_admin_app_lifecycle_and_selection`**: Multi-server start, list navigation (`k`/`j`), and selection index state.
-- **`test_admin_app_batch_and_snapshots`**: TUI snapshot ticker recording rolling history snapshots.
-- **`test_chatty_scenario_rtt`**: Real chat message ping/echo round-trip calculation over live TCP stream.
-- **`test_aggregate_snapshots`**: Multi-server metric aggregation picking maximum p99 latency and summing counters.
-- **`test_multi_server_batch_and_aggregate`**: Even distribution of client batches across multiple running child servers.
-- **`test_fd_limit_error_handling`**: Graceful handling and counting of OS file descriptor exhaustion (`EMFILE`/`ENFILE`).
-
----
-
-## Limitations & Rough Edges
-
-- **Single SQLite Database File:** All server instances currently open `./alyson.db`. SQLite WAL mode allows concurrent readers, but heavy concurrent writes across multiple servers will eventually hit write-lock contention (`busy_timeout`).
-- **Local Process Discovery:** `ServerManager` locates the server binary by checking `target/debug/server` or `target/release/server`. Building with custom target directories requires running `cargo build` first.
-- **Terminal Minimum Dimensions:** Both the client and admin TUIs require at least 80x24 characters. Smaller windows may truncate table columns.
-- **Raw OS Socket Limits:** Ramping thousands of clients locally hits the OS file descriptor limit (`ulimit -n`). The admin tracks `EMFILE` errors cleanly without panicking, but testing beyond ~10,000 clients requires raising your shell's `ulimit -n 65535`.
-
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE) (or Apache-2.0 at your option).
+This project is licensed under the [MIT License](LICENSE).
