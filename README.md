@@ -202,3 +202,40 @@ Communication across sockets uses a two-phase protocol:
 When running a `Chatty` load test, headless clients transmit a `ClientRequest::ChatMessage` containing a timestamp probe. When the server echoes this message back to the sender, the client measures elapsed time:
 $$\text{RTT} = \text{SystemTime::now()} - \text{entry.time}$$
 The duration is clamped and recorded into a pre-allocated `HdrHistogram` (1µs to 60s dynamic range, 3 significant digits). This yields true end-to-end percentiles without runtime heap reallocations.
+
+---
+
+## Development & Testing
+
+### Verification Commands
+
+Verify compilation across all library modules, binaries, and tests:
+```bash
+cargo check --tests --bins
+```
+
+Run the complete test suite:
+```bash
+cargo test
+```
+
+Run the dedicated `alyson-admin` integration test suite:
+```bash
+cargo test --test admin
+```
+
+### Integration Test Suite Coverage
+
+The 12 integration tests in `tests/admin.rs` test:
+- **`test_server_lifecycle`**: Spawning child processes on ephemeral ports, non-blocking address capture, and clean `SIGTERM`/`SIGKILL` shutdown.
+- **`test_headless_client_connect_and_metrics`**: Single headless bot handshake, assigned ID validation, and metric counter decrements on disconnect.
+- **`test_connect_storm_batch`**: Concurrently ramping 10 clients at 50/sec and verifying atomic connection summaries.
+- **`test_histogram_latency_percentiles`**: Verifying p50 and p99 percentiles recorded into HdrHistogram against known synthetic distributions.
+- **`test_rolling_history_buffer`**: Capacity eviction and FIFO ordering in fixed-size rolling history ring buffers.
+- **`test_sysinfo_sampler_process_stats`**: Background process sampling verifying non-zero RSS memory tracking.
+- **`test_admin_app_lifecycle_and_selection`**: Multi-server start, list navigation (`k`/`j`), and selection index state.
+- **`test_admin_app_batch_and_snapshots`**: TUI snapshot ticker recording rolling history snapshots.
+- **`test_chatty_scenario_rtt`**: Real chat message ping/echo round-trip calculation over live TCP stream.
+- **`test_aggregate_snapshots`**: Multi-server metric aggregation picking maximum p99 latency and summing counters.
+- **`test_multi_server_batch_and_aggregate`**: Even distribution of client batches across multiple running child servers.
+- **`test_fd_limit_error_handling`**: Graceful handling and counting of OS file descriptor exhaustion (`EMFILE`/`ENFILE`).
