@@ -29,3 +29,42 @@ Along the way, verifying concurrency by manually opening 10 terminal windows got
   - **Active Chatty Probes:** Headless bots send periodic chat messages and measure true end-to-end round-trip echo latency.
   - **Telemetry & Percentiles:** Microsecond-precision `HdrHistogram` percentiles (p50, p90, p99, p99.9), live CPU% and RSS memory sampling via `sysinfo`.
   - **Ratatui Dashboard:** Live ASCII sparklines for CPU, memory, and active connections, server switcher, help screen overlay, and multi-server aggregate views.
+
+---
+
+## Quickstart
+
+### Prerequisites
+
+- [Rust 1.75+](https://www.rust-lang.org/tools/install)
+- A terminal with at least 80x24 dimensions
+
+Clone and build:
+```bash
+git clone https://github.com/mnasies/alyson.git
+cd alyson
+cargo build
+```
+
+### 1. Dev Mode (Server + Client in One Terminal)
+Spawns an internal server on an OS-assigned port and immediately connects a TUI client:
+```bash
+cargo run
+```
+
+### 2. Standalone Server & Client
+Start a dedicated TCP server listening on a port:
+```bash
+cargo run --bin server -- serve 127.0.0.1:9000
+```
+
+In another terminal, connect a chat client:
+```bash
+cargo run --bin client -- connect 127.0.0.1:9000 --name Alice
+```
+
+### 3. Admin & Load Testing Dashboard
+Launch the interactive monitoring dashboard:
+```bash
+cargo run --bin admin
+```
